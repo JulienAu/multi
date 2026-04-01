@@ -112,6 +112,37 @@ export const actionValidations = pgTable('action_validations', {
   createdAt:   timestamp('created_at').defaultNow().notNull(),
 })
 
+// ─── OPENCLAW INSTANCES ─────────────────────────────────────────────────────
+
+export const openclawStatusEnum = pgEnum('openclaw_status', [
+  'provisioning', 'running', 'stopped', 'error',
+])
+
+export const openclawInstances = pgTable('openclaw_instances', {
+  id:            uuid('id').primaryKey().defaultRandom(),
+  userId:        uuid('user_id').references(() => users.id).notNull().unique(),
+  containerId:   varchar('container_id', { length: 100 }),
+  containerName: varchar('container_name', { length: 100 }).notNull(),
+  port:          integer('port').notNull(),
+  gatewayToken:  varchar('gateway_token', { length: 255 }).notNull(),
+  status:        openclawStatusEnum('status').default('provisioning').notNull(),
+  lastError:     text('last_error'),
+  lastHealthAt:  timestamp('last_health_at'),
+  createdAt:     timestamp('created_at').defaultNow().notNull(),
+  updatedAt:     timestamp('updated_at').defaultNow().notNull(),
+})
+
+// ─── CHAT MESSAGES ──────────────────────────────────────────────────────────
+
+export const chatMessages = pgTable('chat_messages', {
+  id:         uuid('id').primaryKey().defaultRandom(),
+  userId:     uuid('user_id').references(() => users.id).notNull(),
+  role:       varchar('role', { length: 20 }).notNull(), // 'user' | 'assistant'
+  content:    text('content').notNull(),
+  metadata:   jsonb('metadata').$type<Record<string, unknown>>(),
+  createdAt:  timestamp('created_at').defaultNow().notNull(),
+})
+
 // ─── LEADS ──────────────────────────────────────────────────────────────────
 
 export const leads = pgTable('leads', {
@@ -152,3 +183,5 @@ export type Ars             = typeof ars.$inferSelect
 export type Lead            = typeof leads.$inferSelect
 export type AnalyticsEvent    = typeof analyticsEvents.$inferSelect
 export type ActionValidation  = typeof actionValidations.$inferSelect
+export type OpenclawInstance  = typeof openclawInstances.$inferSelect
+export type ChatMessage       = typeof chatMessages.$inferSelect

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(curl -s http://localhost:3002/api/dashboard/summary -H \"Cookie: multi_session=eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJlZWVlZWVlZS1mZmZmLTAwMDAtMTExMS0yMjIyMjIyMjIyMjIiLCJleHAiOjE3Nzc2NDU5Nzd9.yWaWnPH8cCQbQxiZLx5WxnxXUg0qzhYRC_R8FbRujLA\")",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(curl -sL https://openclaw.ai/)",
+      "Bash(curl -sL https://github.com/openclaw/openclaw)",
+      "WebFetch(domain:openclaw.ai)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "Bash(docker exec:*)",
+      "Bash(docker pull:*)",
+      "Bash(docker network:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker rm:*)",
+      "Bash(rm -rf /tmp/openclaw-workspaces/openclaw-aaaaaaaa /tmp/openclaw-configs/openclaw-aaaaaaaa)",
+      "Bash(sudo rm:*)",
+      "Bash(docker run:*)",
+      "Bash(docker stop:*)",
+      "Read(//tmp/openclaw-homes/openclaw-aaaaaaaa/**)",
+      "Bash(python3 -c \"import sys,json; [print\\(x[''''name''''], x[''''type'''']\\) for x in json.loads\\(sys.stdin.read\\(\\)\\)]\")",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"import sys,json; [print\\(x[''''name'''']\\) for x in json.loads\\(sys.stdin.read\\(\\)\\)]\")",
+      "Bash(gh search:*)",
+      "Bash(npm search:*)",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(''''name:'''', d.get\\(''''name'''',''''''''\\)\\); print\\(''''bin:'''', d.get\\(''''bin'''',{}\\)\\); print\\(''''exports:'''', list\\(d.get\\(''''exports'''',{}\\).keys\\(\\)\\)[:20]\\)\")",
+      "Bash(docker restart:*)"
+    ]
+  }
+}

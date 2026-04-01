@@ -5,10 +5,11 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 
 const NAV_ITEMS = [
-  { href: '/dashboard', label: 'Dashboard', icon: '\u25A0' },
-  { href: '/business-md', label: 'BUSINESS.md', icon: '\u2630' },
-  { href: '/scorecard', label: 'Scorecard', icon: '\u2605' },
-  { href: '/agents', label: 'Agents', icon: '\u26A1' },
+  { href: '/dashboard', label: 'Dashboard', icon: '■' },
+  { href: '/chat', label: 'Chat Agent', icon: '●' },
+  { href: '/business-md', label: 'BUSINESS.md', icon: '☰' },
+  { href: '/scorecard', label: 'Scorecard', icon: '★' },
+  { href: '/agents', label: 'Agents', icon: '⚡' },
 ]
 
 interface UserInfo {

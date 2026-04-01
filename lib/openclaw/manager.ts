@@ -1,0 +1,390 @@
+import { db, openclawInstances, businessDocs, wizardSessions, ars } from '@/lib/db'
+import { eq, desc } from 'drizzle-orm'
+
+const PORT_RANGE_START = 19000
+const PORT_RANGE_END = 19999
+const DOCKER_NETWORK = 'multi_default'
+const OPENCLAW_IMAGE = 'ghcr.io/openclaw/openclaw:latest'
+
+async function findAvailablePort(): Promise<number> {
+  const usedPorts = await db.query.openclawInstances.findMany({
+    columns: { port: true },
+  })
+  const usedSet = new Set(usedPorts.map(p => p.port))
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    if (!usedSet.has(port)) return port
+  }
+  throw new Error('No available ports for OpenClaw container')
+}
+
+async function buildWorkspaceContext(userId: string): Promise<{
+  agentsMd: string
+  soulMd: string
+}> {
+  const user = await db.query.users.findFirst({
+    where: (u, { eq }) => eq(u.id, userId),
+    columns: { id: true, email: true, firstName: true, lastName: true, plan: true, createdAt: true },
+  })
+
+  const latestDoc = await db.query.businessDocs.findFirst({
+    where: (d, { eq }) => eq(d.userId, userId),
+    orderBy: [desc(businessDocs.createdAt)],
+  })
+
+  const latestSession = await db.query.wizardSessions.findFirst({
+    where: (s, { eq }) => eq(s.userId, userId),
+    orderBy: [desc(wizardSessions.createdAt)],
+  })
+
+  const activeArs = await db.query.ars.findFirst({
+    where: (a, { eq }) => eq(a.userId, userId),
+  })
+
+  const answers = latestSession?.answers as Record<string, string | string[]> | null
+  const scorecard = activeArs?.scorecardData as Record<string, number> | null
+
+  const agentsMd = `# Agent MULTI — ${user?.firstName ?? 'Architecte'}
+
+Tu es l'agent IA personnel de ${user?.firstName ?? 'l\'Architecte'} sur la plateforme MULTI.
+Tu es un expert en stratégie business, marketing digital, et systèmes d'agents (ARS — Agentic Revenue Systems).
+
+## Ton rôle
+- Conseiller stratégique pour le business de l'Architecte
+- Répondre aux questions sur le BUSINESS.md, la scorecard, et les actions marketing
+- Proposer des améliorations concrètes et spécifiques
+- Rédiger du contenu marketing (posts, emails, descriptions) sur demande
+- Analyser les performances et suggérer des optimisations
+
+## Contexte utilisateur
+- Prénom : ${user?.firstName ?? 'Non renseigné'}
+- Email : ${user?.email ?? 'Non renseigné'}
+- Plan : ${user?.plan ?? 'Aucun plan actif'}
+- Inscrit depuis : ${user?.createdAt?.toLocaleDateString('fr-FR') ?? 'Inconnu'}
+
+## Réponses du wizard
+${answers ? Object.entries(answers).map(([k, v]) => `- ${k} : ${Array.isArray(v) ? v.join(', ') : v}`).join('\n') : 'Aucune réponse de wizard disponible.'}
+
+## ARS
+${activeArs ? `- Nom : ${activeArs.name}\n- Statut : ${activeArs.status}\n- Niveau d'autonomie : ${activeArs.autonomyLevel ?? 'Non configuré'}\n- Fonctions déléguées : ${(activeArs.delegatedFunctions ?? []).join(', ')}` : 'Aucun ARS actif.'}
+
+## Scorecard VALUE
+${scorecard ? Object.entries(scorecard).map(([k, v]) => `- ${k} : ${v}%`).join('\n') : 'Scorecard non disponible.'}
+
+## Instructions
+- Réponds toujours en français
+- Sois concret, spécifique, et orienté action
+- Cite des données du BUSINESS.md quand c'est pertinent
+- Ne révèle jamais le mot de passe ou les données sensibles de l'utilisateur
+- Si on te demande de générer du contenu, adapte-le au ton de la marque défini dans le BUSINESS.md
+`
+
+  const soulMd = latestDoc?.content
+    ? `# BUSINESS.md — Source de vérité\n\nCe document est la source de vérité unique pour toutes tes actions et recommandations.\n\n${latestDoc.content}`
+    : '# BUSINESS.md\n\nAucun BUSINESS.md disponible. Suggère à l\'Architecte de compléter le wizard pour en générer un.'
+
+  return { agentsMd, soulMd }
+}
+
+async function dockerExec(args: string[]): Promise<string> {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const execFileAsync = promisify(execFile)
+  try {
+    const { stdout, stderr } = await execFileAsync('docker', args, { timeout: 60_000 })
+    return (stdout || stderr || '').trim()
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string; message?: string }
+    // Some docker commands output to stderr even on success
+    if (err.stdout) return err.stdout.trim()
+    if (err.stderr) return err.stderr.trim()
+    throw e
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * Get the host path for a container's home directory.
+ */
+function getHomeDir(containerName: string): string {
+  return `/tmp/openclaw-homes/${containerName}`
+}
+
+/**
+ * Provision a new OpenClaw container for a user.
+ * Strategy:
+ *   1. Create container with workspace only (let OpenClaw auto-generate config)
+ *   2. Wait for gateway startup
+ *   3. Read auto-generated token from config
+ *   4. Patch config with our model + bind settings
+ *   5. Restart container to apply
+ */
+export async function provisionOpenClaw(userId: string): Promise<{
+  instanceId: string
+  port: number
+  status: string
+}> {
+  const existing = await db.query.openclawInstances.findFirst({
+    where: (o, { eq }) => eq(o.userId, userId),
+  })
+
+  if (existing && existing.status === 'running') {
+    return { instanceId: existing.id, port: existing.port, status: 'running' }
+  }
+
+  if (existing) {
+    try { await dockerExec(['rm', '-f', existing.containerName]) } catch { /* ignore */ }
+    await db.delete(openclawInstances).where(eq(openclawInstances.id, existing.id))
+  }
+
+  const port = await findAvailablePort()
+  const containerName = `openclaw-${userId.slice(0, 8)}`
+
+  // Create instance record (token will be filled after OpenClaw generates it)
+  const [instance] = await db.insert(openclawInstances).values({
+    userId,
+    containerName,
+    port,
+    gatewayToken: 'pending', // Will be updated after first boot
+    status: 'provisioning',
+  }).returning()
+
+  try {
+    // Build workspace
+    const { agentsMd, soulMd } = await buildWorkspaceContext(userId)
+    const homeDir = `/tmp/openclaw-homes/${containerName}`
+    const fs = await import('fs/promises')
+    await fs.mkdir(`${homeDir}/workspace`, { recursive: true })
+    await fs.writeFile(`${homeDir}/workspace/AGENTS.md`, agentsMd, 'utf-8')
+    await fs.writeFile(`${homeDir}/workspace/SOUL.md`, soulMd, 'utf-8')
+    // Also write BUSINESS.md as a standalone file (OpenClaw tools can read it)
+    const latestDoc = await db.query.businessDocs.findFirst({
+      where: (d, { eq }) => eq(d.userId, userId),
+      orderBy: [desc(businessDocs.createdAt)],
+    })
+    if (latestDoc) {
+      await fs.writeFile(`${homeDir}/workspace/BUSINESS.md`, latestDoc.content, 'utf-8')
+    }
+
+    // Fix ownership for node user (uid 1000)
+    await dockerExec(['run', '--rm', '-v', `${homeDir}:/fix`, 'alpine', 'chown', '-R', '1000:1000', '/fix'])
+
+    // === PHASE 1: Start container (OpenClaw will auto-generate config) ===
+    const containerId = await dockerExec([
+      'run', '-d',
+      '--name', containerName,
+      '--network', DOCKER_NETWORK,
+      '-p', `${port}:18789`,
+      '-v', `${homeDir}:/home/node/.openclaw`,
+      '-e', `OPENROUTER_API_KEY=${process.env.OPENROUTER_API_KEY}`,
+      '--restart', 'unless-stopped',
+      '--memory', '1g',
+      '--cpus', '1',
+      OPENCLAW_IMAGE,
+    ])
+
+    await db.update(openclawInstances)
+      .set({ containerId: containerId.slice(0, 12), updatedAt: new Date() })
+      .where(eq(openclawInstances.id, instance.id))
+
+    // === PHASE 2: Wait for OpenClaw to start and generate config ===
+    // OpenClaw can take 30-90s to fully boot and write config
+    let configReady = false
+    for (let i = 0; i < 40; i++) {
+      await sleep(5000)
+      try {
+        const configPath = `${homeDir}/openclaw.json`
+        await fs.access(configPath) // Check file exists before reading
+        const configRaw = await fs.readFile(configPath, 'utf-8')
+        console.log(`[openclaw] config read attempt ${i + 1}, length=${configRaw.length}`)
+        const config = JSON.parse(configRaw)
+        if (config.gateway?.auth?.token) {
+          configReady = true
+          console.log('[openclaw] config found, patching...')
+
+          // === PHASE 3: Patch config ===
+          const rawModel = process.env.LLM_MODEL_GENERATION || 'qwen/qwen3.6-plus-preview:free'
+          const openclawModel = rawModel.startsWith('openrouter/') ? rawModel : `openrouter/${rawModel}`
+
+          config.agents = config.agents || {}
+          config.agents.defaults = config.agents.defaults || {}
+          config.agents.defaults.model = config.agents.defaults.model || {}
+          config.agents.defaults.model.primary = openclawModel
+
+          // Thinking mode required by some models
+          config.agents.defaults.thinkingDefault = 'minimal'
+
+          // Enable OpenAI-compatible HTTP API + bind to all interfaces
+          config.gateway.bind = '0.0.0.0'
+          config.gateway.http = config.gateway.http || {}
+          config.gateway.http.endpoints = config.gateway.http.endpoints || {}
+          config.gateway.http.endpoints.chatCompletions = { enabled: true }
+
+          await fs.writeFile(`${homeDir}/openclaw.json`, JSON.stringify(config, null, 2), 'utf-8')
+
+          // === PHASE 4: Scan for tool-compatible models via CLI ===
+          console.log('[openclaw] scanning for tool-compatible models...')
+          try {
+            await dockerExec(['exec', containerName, 'openclaw', 'models', 'scan', '--yes'])
+          } catch { /* scan may fail but model set works */ }
+
+          // === PHASE 5: Restart container to apply config ===
+          console.log('[openclaw] restarting container...')
+          await dockerExec(['restart', containerName])
+
+          // Wait for restart
+          await sleep(20_000)
+
+          // === PHASE 6: Read final token AFTER restart (OpenClaw may regenerate it) ===
+          const finalConfigRaw = await fs.readFile(`${homeDir}/openclaw.json`, 'utf-8')
+          const finalConfig = JSON.parse(finalConfigRaw)
+          const finalToken = finalConfig.gateway?.auth?.token ?? config.gateway.auth.token
+
+          console.log(`[openclaw] final token: ${finalToken.slice(0, 10)}...`)
+
+          await db.update(openclawInstances)
+            .set({
+              gatewayToken: finalToken,
+              status: 'running',
+              updatedAt: new Date(),
+            })
+            .where(eq(openclawInstances.id, instance.id))
+
+          break
+        }
+      } catch (e) {
+        console.log(`[openclaw] config read attempt ${i + 1} failed:`, e instanceof Error ? e.message : e)
+      }
+    }
+
+    if (!configReady) {
+      throw new Error('OpenClaw failed to generate config after 3 minutes')
+    }
+
+    return { instanceId: instance.id, port, status: 'running' }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    await db.update(openclawInstances)
+      .set({ status: 'error', lastError: errorMsg, updatedAt: new Date() })
+      .where(eq(openclawInstances.id, instance.id))
+    throw error
+  }
+}
+
+export async function stopOpenClaw(userId: string): Promise<void> {
+  const instance = await db.query.openclawInstances.findFirst({
+    where: (o, { eq }) => eq(o.userId, userId),
+  })
+  if (!instance) return
+
+  try { await dockerExec(['rm', '-f', instance.containerName]) } catch { /* ignore */ }
+  await db.update(openclawInstances)
+    .set({ status: 'stopped', updatedAt: new Date() })
+    .where(eq(openclawInstances.id, instance.id))
+}
+
+export async function getOpenClawInstance(userId: string) {
+  return db.query.openclawInstances.findFirst({
+    where: (o, { eq }) => eq(o.userId, userId),
+  })
+}
+
+/**
+ * Send a message to the user's OpenClaw agent via OpenAI-compatible HTTP API.
+ * Uses /v1/chat/completions endpoint (enabled in config patch).
+ */
+export async function sendToOpenClaw(
+  instance: { port: number; gatewayToken: string; containerName: string },
+  message: string,
+): Promise<string> {
+  const hosts = [
+    `${instance.containerName}:18789`,
+    `host.docker.internal:${instance.port}`,
+  ]
+
+  let lastError = ''
+  for (const host of hosts) {
+    try {
+      const response = await fetch(`http://${host}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${instance.gatewayToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'openclaw/default',
+          messages: [{ role: 'user', content: message }],
+          thinking: { type: 'enabled', budget_tokens: 2048 },
+        }),
+        signal: AbortSignal.timeout(120_000),
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`OpenClaw ${response.status}: ${text}`)
+      }
+
+      const data = await response.json()
+      // OpenAI-compatible response format
+      let content = data.choices?.[0]?.message?.content ?? JSON.stringify(data)
+      // Strip OpenClaw internal commands (e.g. "/approve ..." prefix)
+      content = content.replace(/^\/approve\s+\S+\s+(allow-once|allow-always|deny)\s*/i, '').trim()
+      return content
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  throw new Error(`Could not reach OpenClaw: ${lastError}`)
+}
+
+export async function refreshWorkspace(userId: string): Promise<void> {
+  const instance = await getOpenClawInstance(userId)
+  if (!instance || instance.status !== 'running') return
+
+  const { agentsMd, soulMd } = await buildWorkspaceContext(userId)
+  const homeDir = `/tmp/openclaw-homes/${instance.containerName}`
+
+  const fs = await import('fs/promises')
+  await fs.writeFile(`${homeDir}/workspace/AGENTS.md`, agentsMd, 'utf-8')
+  await fs.writeFile(`${homeDir}/workspace/SOUL.md`, soulMd, 'utf-8')
+
+  const latestDoc = await db.query.businessDocs.findFirst({
+    where: (d, { eq }) => eq(d.userId, userId),
+    orderBy: [desc(businessDocs.createdAt)],
+  })
+  if (latestDoc) {
+    await fs.writeFile(`${homeDir}/workspace/BUSINESS.md`, latestDoc.content, 'utf-8')
+  }
+}
+
+export async function checkHealth(userId: string): Promise<boolean> {
+  const instance = await getOpenClawInstance(userId)
+  if (!instance || instance.status !== 'running') return false
+
+  try {
+    // Try both routes
+    const hosts = [
+      `${instance.containerName}:18789`,
+      `host.docker.internal:${instance.port}`,
+    ]
+
+    for (const host of hosts) {
+      try {
+        const res = await fetch(`http://${host}/healthz`, { signal: AbortSignal.timeout(3000) })
+        if (res.ok) {
+          await db.update(openclawInstances)
+            .set({ lastHealthAt: new Date(), updatedAt: new Date() })
+            .where(eq(openclawInstances.id, instance.id))
+          return true
+        }
+      } catch { /* try next */ }
+    }
+
+    return false
+  } catch {
+    return false
+  }
+}

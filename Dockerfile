@@ -2,6 +2,9 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Install Docker CLI (needed to manage OpenClaw containers)
+RUN apk add --no-cache docker-cli
+
 # Install dependencies
 COPY package.json package-lock.json ./
 RUN npm ci
