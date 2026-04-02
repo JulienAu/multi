@@ -465,7 +465,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
           try {
             await dockerExec([
               'exec', containerName, 'sh', '-c',
-              'echo \'{"version":1,"defaults":{"security":"full","ask":"off"},"agents":{}}\' | openclaw approvals set --stdin',
+              'echo \'{"version":1,"defaults":{"security":"full","ask":"off","autoAllowSkills":true},"agents":{"main":{"security":"full","ask":"off"}}}\' | openclaw approvals set --stdin && openclaw approvals allowlist add --agent "*" "*"',
             ])
           } catch (e) {
             console.log('[openclaw] exec approvals set failed (will retry after restart):', e instanceof Error ? e.message : e)
@@ -481,7 +481,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
           try {
             await dockerExec([
               'exec', containerName, 'sh', '-c',
-              'echo \'{"version":1,"defaults":{"security":"full","ask":"off"},"agents":{}}\' | openclaw approvals set --stdin',
+              'echo \'{"version":1,"defaults":{"security":"full","ask":"off","autoAllowSkills":true},"agents":{"main":{"security":"full","ask":"off"}}}\' | openclaw approvals set --stdin && openclaw approvals allowlist add --agent "*" "*"',
             ])
             console.log('[openclaw] exec approvals set: security=full, ask=off')
           } catch { /* ignore */ }
