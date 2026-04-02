@@ -30,9 +30,19 @@ export async function POST(req: NextRequest) {
     // Save user message
     await db.insert(chatMessages).values({ userId, role: 'user', content: message })
 
-    // Stream from OpenClaw via HTTP /v1/chat/completions
-    // This endpoint auto-approves all tool calls internally
-    const openclawResponse = await streamFromOpenClaw(instance, message)
+    // Load conversation history for context (last 20 messages)
+    const history = await db.query.chatMessages.findMany({
+      where: (m, { eq }) => eq(m.userId, userId),
+      orderBy: (m, { desc }) => [desc(m.createdAt)],
+      limit: 20,
+    })
+    const chatHistory = history.reverse().map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }))
+
+    // Stream from OpenClaw with full conversation history
+    const openclawResponse = await streamFromOpenClaw(instance, chatHistory)
     if (!openclawResponse.body) {
       return NextResponse.json({ error: 'No stream body' }, { status: 500 })
     }

@@ -381,8 +381,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
           console.log('[openclaw] config found, patching...')
 
           // === PHASE 3: Patch config ===
-          // OpenClaw agent model (needs tool support + large context window)
-          const rawModel = process.env.LLM_MODEL_OPENCLAW || 'nvidia/nemotron-3-super-120b-a12b:free'
+          // OpenClaw agent model (needs tool support + fast response)
+          const rawModel = process.env.LLM_MODEL_OPENCLAW || 'google/gemini-3.1-flash-lite-preview'
           const openclawModel = rawModel.startsWith('openrouter/') ? rawModel : `openrouter/${rawModel}`
 
           config.agents = config.agents || {}
@@ -519,9 +519,9 @@ export async function getOpenClawInstance(userId: string) {
  */
 export async function sendToOpenClaw(
   instance: { port: number; gatewayToken: string; containerName: string },
-  message: string,
+  messages: { role: string; content: string }[],
 ): Promise<string> {
-  const response = await fetchOpenClaw(instance, message, false)
+  const response = await fetchOpenClaw(instance, messages, false)
 
   if (!response.ok) {
     const text = await response.text()
@@ -539,9 +539,9 @@ export async function sendToOpenClaw(
  */
 export async function streamFromOpenClaw(
   instance: { port: number; gatewayToken: string; containerName: string },
-  message: string,
+  messages: { role: string; content: string }[],
 ): Promise<Response> {
-  const response = await fetchOpenClaw(instance, message, true)
+  const response = await fetchOpenClaw(instance, messages, true)
 
   if (!response.ok) {
     const text = await response.text()
@@ -553,7 +553,7 @@ export async function streamFromOpenClaw(
 
 async function fetchOpenClaw(
   instance: { port: number; gatewayToken: string; containerName: string },
-  message: string,
+  messages: { role: string; content: string }[],
   stream: boolean,
 ): Promise<Response> {
   const hosts = [
@@ -572,11 +572,11 @@ async function fetchOpenClaw(
         },
         body: JSON.stringify({
           model: 'openclaw/default',
-          messages: [{ role: 'user', content: message }],
+          messages,
           thinking: { type: 'enabled', budget_tokens: 2048 },
           stream,
         }),
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(300_000),
       })
       return response
     } catch (e) {
