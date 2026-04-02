@@ -167,6 +167,31 @@ export class OpenClawClient extends EventEmitter {
     const event = msg.event as string
     const payload = msg.payload as Record<string, unknown>
 
+    // Log all events for debugging
+    if (event !== 'health' && event !== 'connect.challenge') {
+      console.log(`[openclaw/ws] event: ${event}`, JSON.stringify(payload).slice(0, 150))
+    }
+
+    // Auto-approved exec (ask=off emits resolved, not requested)
+    if (event === 'exec.approval.resolved' || event === 'exec.auto') {
+      const plan = payload.request as Record<string, unknown> | undefined
+      const command = (plan?.rawCommand as string) ?? (plan?.command as string) ?? (payload.command as string) ?? ''
+      if (command) {
+        this.emit('event', {
+          type: 'tool.requested',
+          request: {
+            id: (payload.id as string) ?? '',
+            type: 'exec' as const,
+            command,
+            agentId: (payload.agentId as string) ?? 'main',
+            sessionKey: (payload.sessionKey as string) ?? 'main',
+            timeoutMs: 15000,
+          },
+        } as OpenClawEvent)
+      }
+      return
+    }
+
     if (event === 'exec.approval.requested') {
       const plan = payload.systemRunPlan as Record<string, string> | undefined
       this.emit('event', {
@@ -250,6 +275,30 @@ export class OpenClawClient extends EventEmitter {
       const text = (payload.text as string) ?? (payload.output as string) ?? ''
       if (text) {
         this.emit('event', { type: 'chat.delta', data: { content: text } } as OpenClawEvent)
+      }
+    }
+
+    // Agent lifecycle events — capture tool usage from agent stream
+    if (event === 'agent') {
+      const data = payload.data as Record<string, unknown> | undefined
+      const stream = payload.stream as string
+
+      // Tool use events
+      if (stream === 'tool_use' || stream === 'tool' || stream === 'exec') {
+        const command = (data?.command as string) ?? (data?.name as string) ?? (data?.text as string) ?? ''
+        if (command) {
+          this.emit('event', {
+            type: 'tool.requested',
+            request: {
+              id: (payload.runId as string) ?? '',
+              type: 'exec' as const,
+              command,
+              agentId: 'main',
+              sessionKey: (payload.sessionKey as string) ?? 'main',
+              timeoutMs: 30000,
+            },
+          } as OpenClawEvent)
+        }
       }
     }
   }
