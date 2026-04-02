@@ -40,7 +40,16 @@ class SessionManager {
       throw new Error('OpenClaw instance not running')
     }
 
-    // Try container name first (inside Docker network), fallback to localhost
+    // Load device identity for signed WS connection
+    const fs = await import('fs/promises')
+    let deviceIdentity: { deviceId: string; pubKeyB64Url: string; privPem: string } | undefined
+    try {
+      const raw = await fs.readFile(`/tmp/openclaw-homes/${instance.containerName}/multi-device.json`, 'utf-8')
+      deviceIdentity = JSON.parse(raw)
+    } catch {
+      console.log('[openclaw/ws] no device identity found, connecting without device signing')
+    }
+
     const hosts = [
       `${instance.containerName}:18789`,
       `host.docker.internal:${instance.port}`,
@@ -51,7 +60,7 @@ class SessionManager {
 
     for (const host of hosts) {
       try {
-        const c = new OpenClawClient(host, instance.gatewayToken)
+        const c = new OpenClawClient(host, instance.gatewayToken, deviceIdentity)
         await c.connect()
         client = c
         break

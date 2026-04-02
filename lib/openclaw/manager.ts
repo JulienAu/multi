@@ -1,5 +1,6 @@
 import { db, openclawInstances, businessDocs, wizardSessions, ars } from '@/lib/db'
 import { eq, desc } from 'drizzle-orm'
+import crypto from 'crypto'
 
 const PORT_RANGE_START = 19000
 const PORT_RANGE_END = 19999
@@ -78,11 +79,96 @@ ${scorecard ? Object.entries(scorecard).map(([k, v]) => `- ${k} : ${v}%`).join('
 - Si on te demande de générer du contenu, adapte-le au ton de la marque défini dans le BUSINESS.md
 `
 
+  // SOUL.md = résumé concis, pas le doc complet. L'agent peut lire workspace/BUSINESS.md si besoin.
+  const sector = answers?.sector ?? 'Non renseigné'
+  const name = answers?.name ?? 'Non renseigné'
+  const location = answers?.location ?? 'Non renseigné'
+  const offer = answers?.offer ?? ''
+  const customer = answers?.customer ?? ''
+  const goal = answers?.goal ?? ''
+  const tone = answers?.tone ?? ''
+  const delegate = Array.isArray(answers?.delegate) ? (answers.delegate as string[]).join(', ') : ''
+
   const soulMd = latestDoc?.content
-    ? `# BUSINESS.md — Source de vérité\n\nCe document est la source de vérité unique pour toutes tes actions et recommandations.\n\n${latestDoc.content}`
+    ? `# Identité Business — Résumé
+
+- **Nom :** ${name}
+- **Secteur :** ${sector}
+- **Localisation :** ${location}
+- **Offre :** ${offer}
+- **Client idéal :** ${customer}
+- **Objectif 12 mois :** ${goal}
+- **Ton de marque :** ${tone}
+- **Fonctions déléguées :** ${delegate}
+
+## Instructions importantes
+
+Le document BUSINESS.md complet (${latestDoc.lineCount ?? '?'} lignes, ${latestDoc.sectionCount ?? '?'} sections) est disponible dans ton workspace.
+**Lis le fichier workspace/BUSINESS.md** avec l'outil Read quand tu as besoin de détails sur :
+- La stratégie d'acquisition et les canaux
+- Les cibles prioritaires et leur approche
+- Le calendrier marketing
+- Les contraintes et guardrails
+- La voix et le ton de la marque
+
+Ne devine pas — lis le fichier.`
     : '# BUSINESS.md\n\nAucun BUSINESS.md disponible. Suggère à l\'Architecte de compléter le wizard pour en générer un.'
 
   return { agentsMd, soulMd }
+}
+
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+
+function base64UrlEncode(buf: Buffer): string {
+  return buf.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '')
+}
+
+/**
+ * Generate an Ed25519 key pair and return everything needed for device pairing.
+ */
+function generateDeviceIdentity() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
+  const pubPem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+  const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+  const spki = publicKey.export({ type: 'spki', format: 'der' })
+  const rawPub = spki.subarray(ED25519_SPKI_PREFIX.length)
+  const pubKeyB64Url = base64UrlEncode(rawPub)
+  const deviceId = crypto.createHash('sha256').update(rawPub).digest('hex')
+
+  return { deviceId, pubKeyB64Url, pubPem, privPem }
+}
+
+/**
+ * Build the pre-paired device entry for devices/paired.json.
+ */
+function buildPairedDeviceEntry(deviceId: string, pubKeyB64Url: string) {
+  const now = Date.now()
+  const scopes = ['operator.read', 'operator.write', 'operator.approvals', 'operator.admin']
+  const deviceToken = crypto.randomBytes(32).toString('base64url')
+  return {
+    [deviceId]: {
+      deviceId,
+      publicKey: pubKeyB64Url,
+      displayName: 'multi-dashboard',
+      platform: 'linux',
+      clientId: 'cli',
+      clientMode: 'cli',
+      role: 'operator',
+      roles: ['operator'],
+      scopes,
+      approvedScopes: scopes,
+      tokens: {
+        operator: {
+          token: deviceToken,
+          role: 'operator',
+          scopes,
+          createdAtMs: now,
+        },
+      },
+      createdAtMs: now,
+      approvedAtMs: now,
+    },
+  }
 }
 
 async function dockerExec(args: string[]): Promise<string> {
@@ -205,8 +291,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
           console.log('[openclaw] config found, patching...')
 
           // === PHASE 3: Patch config ===
-          // OpenClaw agent model (needs tool support — separate from BUSINESS.md generation)
-          const rawModel = process.env.LLM_MODEL_OPENCLAW || 'minimax/minimax-m2.5'
+          // OpenClaw agent model (needs tool support + large context window)
+          const rawModel = process.env.LLM_MODEL_OPENCLAW || 'nvidia/nemotron-3-super-120b-a12b:free'
           const openclawModel = rawModel.startsWith('openrouter/') ? rawModel : `openrouter/${rawModel}`
 
           config.agents = config.agents || {}
@@ -228,25 +314,48 @@ export async function provisionOpenClaw(userId: string): Promise<{
 
           await fs.writeFile(`${homeDir}/openclaw.json`, JSON.stringify(config, null, 2), 'utf-8')
 
-          // === PHASE 4: Scan for tool-compatible models via CLI ===
-          console.log('[openclaw] scanning for tool-compatible models...')
-          try {
-            await dockerExec(['exec', containerName, 'openclaw', 'models', 'scan', '--yes'])
-          } catch { /* scan may fail but model set works */ }
+          // === PHASE 4: Pre-pair a device for our WS client ===
+          console.log('[openclaw] pre-pairing device for WebSocket access...')
+          const device = generateDeviceIdentity()
+          const pairedEntry = buildPairedDeviceEntry(device.deviceId, device.pubKeyB64Url)
 
-          // === PHASE 5: Restart container to apply config ===
+          // Merge with existing paired devices
+          let existingPaired: Record<string, unknown> = {}
+          try {
+            const pairedRaw = await fs.readFile(`${homeDir}/devices/paired.json`, 'utf-8')
+            existingPaired = JSON.parse(pairedRaw)
+          } catch { /* file may not exist yet */ }
+          const mergedPaired = { ...existingPaired, ...pairedEntry }
+          await fs.mkdir(`${homeDir}/devices`, { recursive: true })
+          await fs.writeFile(`${homeDir}/devices/paired.json`, JSON.stringify(mergedPaired, null, 2), 'utf-8')
+
+          // Save device identity for our WS client
+          await fs.writeFile(`${homeDir}/multi-device.json`, JSON.stringify({
+            deviceId: device.deviceId,
+            pubKeyB64Url: device.pubKeyB64Url,
+            privPem: device.privPem,
+          }), 'utf-8')
+
+          // Fix permissions on all files we wrote (node user uid 1000)
+          await dockerExec([
+            'run', '--rm',
+            '-v', `${homeDir}:/fix`,
+            'alpine', 'chown', '-R', '1000:1000', '/fix',
+          ])
+
+          // === PHASE 5: Restart container to apply config + paired device ===
           console.log('[openclaw] restarting container...')
           await dockerExec(['restart', containerName])
 
-          // Wait for restart
           await sleep(20_000)
 
-          // === PHASE 6: Read final token AFTER restart (OpenClaw may regenerate it) ===
+          // === PHASE 6: Read final token + save ===
           const finalConfigRaw = await fs.readFile(`${homeDir}/openclaw.json`, 'utf-8')
           const finalConfig = JSON.parse(finalConfigRaw)
           const finalToken = finalConfig.gateway?.auth?.token ?? config.gateway.auth.token
 
           console.log(`[openclaw] final token: ${finalToken.slice(0, 10)}...`)
+          console.log(`[openclaw] device paired: ${device.deviceId.slice(0, 16)}...`)
 
           await db.update(openclawInstances)
             .set({

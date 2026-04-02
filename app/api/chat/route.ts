@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
-import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '@/lib/openclaw/manager'
+import { sessionManager } from '@/lib/openclaw/session-manager'
 import { db, chatMessages } from '@/lib/db'
 import { desc } from 'drizzle-orm'
 import { z } from 'zod'
+import type { OpenClawEvent } from '@/lib/openclaw/ws-client'
 
 const sendSchema = z.object({
   message: z.string().min(1).max(10000),
@@ -19,96 +20,128 @@ export async function POST(req: NextRequest) {
 
     const { message } = sendSchema.parse(await req.json())
 
-    const instance = await getOpenClawInstance(userId)
-    if (!instance || instance.status !== 'running') {
-      return NextResponse.json(
-        { error: 'Agent non déployé. Provisionnez votre agent d\'abord.' },
-        { status: 400 },
-      )
-    }
-
     // Save user message
     await db.insert(chatMessages).values({ userId, role: 'user', content: message })
 
-    // Start streaming from OpenClaw
-    const openclawResponse = await streamFromOpenClaw(instance, message)
-    if (!openclawResponse.body) {
-      return NextResponse.json({ error: 'No stream body' }, { status: 500 })
+    // Get WS session
+    let session
+    try {
+      session = await sessionManager.getSession(userId)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Cannot connect to agent'
+      return NextResponse.json({ error: msg }, { status: 500 })
     }
 
-    const openclawReader = openclawResponse.body.getReader()
-    const decoder = new TextDecoder()
-
-    // Shared state between the background consumer and the client stream
     let fullContent = ''
+    let lastSeenContent = '' // Track cumulative content to compute true deltas
     let clientClosed = false
-    let streamDone = false
-
-    // Background task: consume the OpenClaw stream fully, regardless of client state.
-    // This ensures the response is saved to DB even if the user leaves the page.
-    const backgroundConsume = async (onDelta: (text: string) => void) => {
-      try {
-        while (true) {
-          const { done, value } = await openclawReader.read()
-          if (done) break
-
-          const chunk = decoder.decode(value, { stream: true })
-          const lines = chunk.split('\n')
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const data = line.slice(6).trim()
-            if (data === '[DONE]') continue
-
-            try {
-              const parsed = JSON.parse(data)
-              const delta = parsed.choices?.[0]?.delta?.content
-              if (delta) {
-                fullContent += delta
-                onDelta(delta)
-              }
-            } catch { /* skip unparseable */ }
-          }
-        }
-      } catch (e) {
-        console.error('[chat/background]', e)
-      } finally {
-        streamDone = true
-        // Always save the response, even if client disconnected mid-stream
-        fullContent = cleanOpenClawResponse(fullContent)
-        if (fullContent) {
-          await db.insert(chatMessages).values({
-            userId,
-            role: 'assistant',
-            content: fullContent,
-          }).catch(console.error)
-        }
-      }
-    }
-
     const encoder = new TextEncoder()
+
     const stream = new ReadableStream({
       start(controller) {
-        // Start background consumer — it calls onDelta for each chunk
-        backgroundConsume((delta) => {
+        const removeListener = sessionManager.addListener(userId, (event: OpenClawEvent) => {
           if (clientClosed) return
           try {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'delta', content: delta })}\n\n`))
-          } catch {
-            clientClosed = true
-          }
-        }).then(() => {
-          if (!clientClosed) {
-            try {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
-              controller.close()
-            } catch { /* already closed */ }
-          }
+            switch (event.type) {
+              case 'chat.delta': {
+                const received = event.data.content
+                // Detect if this is cumulative (starts with what we already have) or incremental
+                let delta: string
+                if (received.length > lastSeenContent.length && received.startsWith(lastSeenContent)) {
+                  // Cumulative: extract only the new part
+                  delta = received.slice(lastSeenContent.length)
+                  lastSeenContent = received
+                } else {
+                  // Incremental delta
+                  delta = received
+                  lastSeenContent += received
+                }
+                if (delta) {
+                  fullContent += delta
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({ type: 'delta', content: delta })}\n\n`
+                  ))
+                }
+                break
+              }
+
+              case 'chat.final':
+                if (event.content) fullContent = event.content
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
+                cleanup()
+                break
+
+              case 'chat.error':
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: 'error', error: event.error })}\n\n`
+                ))
+                cleanup()
+                break
+
+              case 'tool.requested':
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: 'tool_request',
+                    id: event.request.id,
+                    toolType: event.request.type,
+                    command: event.request.command,
+                    title: event.request.title,
+                    description: event.request.description || event.request.command,
+                  })}\n\n`
+                ))
+                break
+
+              case 'tool.resolved':
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: 'tool_resolved',
+                    id: event.id,
+                    decision: event.decision,
+                  })}\n\n`
+                ))
+                break
+            }
+          } catch { clientClosed = true }
         })
+
+        // Send the message via WS
+        sessionManager.sendMessage(userId, message).catch((err) => {
+          if (!clientClosed) {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`
+            ))
+          }
+          cleanup()
+        })
+
+        // Timeout after 3 minutes
+        const timeout = setTimeout(() => {
+          if (fullContent) {
+            try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`)) } catch {}
+          }
+          cleanup()
+        }, 180_000)
+
+        function cleanup() {
+          clearTimeout(timeout)
+          removeListener()
+          clientClosed = true
+          try { controller.close() } catch {}
+
+          // Save response to DB
+          const cleaned = fullContent.replace(/^\/approve\s+\S+\s+(allow-once|allow-always|deny)\s*/i, '').trim()
+          if (cleaned) {
+            db.insert(chatMessages).values({
+              userId,
+              role: 'assistant',
+              content: cleaned,
+            }).catch(console.error)
+          }
+        }
       },
       cancel() {
-        // Client disconnected — mark as closed but DON'T abort the OpenClaw reader
         clientClosed = true
+        // Note: WS session stays alive — response will still be saved via the timeout cleanup
       },
     })
 

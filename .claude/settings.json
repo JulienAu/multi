@@ -30,7 +30,8 @@
       "WebFetch(domain:github.com)",
       "Bash(gh repo:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")"
+      "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")",
+      "Bash(python3 -m json.tool)"
     ]
   }
 }
