@@ -237,6 +237,14 @@ export function ChatInterface() {
             if (ev.type === 'delta' && ev.content) {
               setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: m.content + ev.content } : m))
             }
+            if (ev.type === 'tool_use') {
+              // Show tool usage as a subtle inline indicator
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId
+                  ? { ...m, content: m.content + `\n\n> ⚙ *${ev.command}*\n\n` }
+                  : m
+              ))
+            }
           } catch {}
         }
       }
