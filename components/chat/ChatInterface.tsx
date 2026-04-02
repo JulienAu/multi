@@ -43,8 +43,11 @@ export function ChatInterface() {
   const [deployError, setDeployError] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
+  const [attachments, setAttachments] = useState<{ path: string; name: string; type: string }[]>([])
+  const [uploading, setUploading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const currentAssistantId = useRef<string | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -186,10 +189,37 @@ export function ChatInterface() {
     } catch (e) { setDeployError(e instanceof Error ? e.message : 'Erreur'); updateStep(0, 'error'); setProvisioning(false) }
   }
 
+  // ─── Upload file ───────────────────────────────────────────────────────
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files?.length) return
+    setUploading(true)
+
+    for (const file of Array.from(files)) {
+      const formData = new FormData()
+      formData.append('file', file)
+      try {
+        const res = await fetch('/api/chat/upload', { method: 'POST', body: formData })
+        if (res.ok) {
+          const data = await res.json()
+          setAttachments(prev => [...prev, { path: data.path, name: data.name, type: data.type }])
+        }
+      } catch { /* ignore */ }
+    }
+
+    setUploading(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removeAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index))
+  }
+
   // ─── Send message ─────────────────────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || sending) return
+    if (!text && attachments.length === 0) return
+    if (sending) return
 
     // Auto-create conversation if none active
     let convId = activeConvId
@@ -197,8 +227,22 @@ export function ChatInterface() {
       convId = await createConversation()
     }
 
-    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text, createdAt: new Date().toISOString() }])
-    setInput(''); setSending(true)
+    // Build message with attachments context
+    let fullMessage = text
+    if (attachments.length > 0) {
+      const fileList = attachments.map(a => {
+        const isImage = a.type.startsWith('image/')
+        return `- ${a.name} (${isImage ? 'image' : 'fichier'}, chemin: workspace/${a.path})`
+      }).join('\n')
+      fullMessage = `${text}\n\n[Fichiers joints dans le workspace de l'agent:]\n${fileList}`
+    }
+
+    const displayContent = text + (attachments.length > 0
+      ? '\n' + attachments.map(a => `📎 ${a.name}`).join('\n')
+      : '')
+
+    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: displayContent, createdAt: new Date().toISOString() }])
+    setInput(''); setAttachments([]); setSending(true)
 
     const assistantId = `asst-${Date.now()}`
     currentAssistantId.current = assistantId
@@ -207,7 +251,7 @@ export function ChatInterface() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, conversationId: convId }),
+        body: JSON.stringify({ message: fullMessage, conversationId: convId }),
       })
 
       if (!res.ok) {
@@ -425,7 +469,45 @@ export function ChatInterface() {
 
         {/* Input */}
         <div className="px-4 py-3 border-t border-ui-border shrink-0">
+          {/* Attachments preview */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {attachments.map((att, i) => (
+                <div key={i} className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-ui-bg-tertiary border border-ui-border text-xs">
+                  <span>{att.type.startsWith('image/') ? '🖼' : '📎'}</span>
+                  <span className="text-ui-text-primary truncate max-w-32">{att.name}</span>
+                  <button onClick={() => removeAttachment(i)} className="text-ui-text-tertiary hover:text-status-error ml-1">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex gap-2 items-end">
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.txt,.md,.html,.css,.js,.json,.csv,.doc,.docx,.xls,.xlsx"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            {/* Attach button */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending || uploading}
+              className="shrink-0 w-10 h-10 rounded-xl border border-ui-border text-ui-text-tertiary flex items-center justify-center hover:bg-ui-bg-tertiary hover:text-ui-text-primary transition-colors disabled:opacity-40"
+              title="Joindre un fichier"
+            >
+              {uploading ? (
+                <span className="w-4 h-4 rounded-full border-2 border-ui-text-tertiary border-t-transparent animate-spin" />
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+                </svg>
+              )}
+            </button>
             <textarea
               ref={inputRef}
               value={input}
@@ -437,7 +519,7 @@ export function ChatInterface() {
               style={{ maxHeight: '120px' }}
               disabled={sending}
             />
-            <button onClick={handleSend} disabled={!input.trim() || sending} className="shrink-0 w-10 h-10 rounded-xl bg-brand-violet text-white flex items-center justify-center hover:bg-brand-violet-dark transition-colors disabled:opacity-40">
+            <button onClick={handleSend} disabled={(!input.trim() && attachments.length === 0) || sending} className="shrink-0 w-10 h-10 rounded-xl bg-brand-violet text-white flex items-center justify-center hover:bg-brand-violet-dark transition-colors disabled:opacity-40">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
             </button>
           </div>
