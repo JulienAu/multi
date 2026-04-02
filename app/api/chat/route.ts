@@ -43,8 +43,35 @@ export async function POST(req: NextRequest) {
     let fullContent = ''
     let clientClosed = false
 
+    // Approve pattern to filter from streaming output
+    const APPROVE_PATTERN = /\/?[Aa]pprove\s+\S+\s+(allow-once|allow-always|allow|deny)\s*/g
+
     // Background: consume OpenClaw stream fully (even if client leaves)
     const backgroundConsume = async (onDelta: (text: string) => void) => {
+      // Buffer to handle partial /approve commands across chunk boundaries
+      let pendingBuffer = ''
+
+      const flushClean = (force: boolean) => {
+        if (!pendingBuffer) return
+        if (!force && (pendingBuffer.includes('/') || pendingBuffer.includes('A'))) {
+          // Might be start of /approve — check if buffer looks like a partial match
+          const lastSlash = pendingBuffer.lastIndexOf('/')
+          const lastA = pendingBuffer.lastIndexOf('A')
+          const suspectStart = Math.max(lastSlash, lastA)
+          // If the suspect part is near the end and short, hold it
+          if (suspectStart >= 0 && pendingBuffer.length - suspectStart < 50) {
+            const safe = pendingBuffer.slice(0, suspectStart)
+            if (safe) onDelta(safe)
+            pendingBuffer = pendingBuffer.slice(suspectStart)
+            return
+          }
+        }
+        // Clean and flush
+        const cleaned = pendingBuffer.replace(APPROVE_PATTERN, '')
+        if (cleaned) onDelta(cleaned)
+        pendingBuffer = ''
+      }
+
       try {
         while (true) {
           const { done, value } = await openclawReader.read()
@@ -61,15 +88,17 @@ export async function POST(req: NextRequest) {
               const delta = parsed.choices?.[0]?.delta?.content
               if (delta) {
                 fullContent += delta
-                onDelta(delta)
+                pendingBuffer += delta
+                flushClean(false)
               }
             } catch { /* skip */ }
           }
         }
+        // Flush remaining buffer
+        flushClean(true)
       } catch (e) {
         console.error('[chat/background]', e)
       } finally {
-        // Always save response
         fullContent = cleanOpenClawResponse(fullContent)
         if (fullContent) {
           await db.insert(chatMessages).values({

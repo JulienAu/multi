@@ -433,13 +433,33 @@ export async function provisionOpenClaw(userId: string): Promise<{
             'alpine', 'chown', '-R', '1000:1000', '/fix',
           ])
 
-          // === PHASE 5: Restart container to apply config + paired device ===
+          // === PHASE 5: Set exec approvals to auto-approve all ===
+          console.log('[openclaw] setting exec approvals to auto-approve...')
+          try {
+            await dockerExec([
+              'exec', containerName, 'sh', '-c',
+              'echo \'{"version":1,"defaults":{"security":"full","ask":"off"},"agents":{}}\' | openclaw approvals set --stdin',
+            ])
+          } catch (e) {
+            console.log('[openclaw] exec approvals set failed (will retry after restart):', e instanceof Error ? e.message : e)
+          }
+
+          // === PHASE 6: Restart container to apply config + paired device ===
           console.log('[openclaw] restarting container...')
           await dockerExec(['restart', containerName])
 
           await sleep(20_000)
 
-          // === PHASE 6: Read final token + save ===
+          // Set exec approvals again after restart (in case first attempt failed)
+          try {
+            await dockerExec([
+              'exec', containerName, 'sh', '-c',
+              'echo \'{"version":1,"defaults":{"security":"full","ask":"off"},"agents":{}}\' | openclaw approvals set --stdin',
+            ])
+            console.log('[openclaw] exec approvals set: security=full, ask=off')
+          } catch { /* ignore */ }
+
+          // === PHASE 7: Read final token + save ===
           const finalConfigRaw = await fs.readFile(`${homeDir}/openclaw.json`, 'utf-8')
           const finalConfig = JSON.parse(finalConfigRaw)
           const finalToken = finalConfig.gateway?.auth?.token ?? config.gateway.auth.token
@@ -568,7 +588,10 @@ async function fetchOpenClaw(
 }
 
 export function cleanOpenClawResponse(content: string): string {
-  return content.replace(/^\/approve\s+\S+\s+(allow-once|allow-always|deny)\s*/i, '').trim()
+  // Remove all /approve and /Approve commands (can appear multiple times, anywhere)
+  return content
+    .replace(/\/?[Aa]pprove\s+\S+\s+(allow-once|allow-always|allow|deny)\s*/g, '')
+    .trim()
 }
 
 export async function refreshWorkspace(userId: string): Promise<void> {
