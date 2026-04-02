@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
 import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '@/lib/openclaw/manager'
+import { callLLM, MODELS } from '@/lib/llm/client'
 import { db, chatMessages, conversations } from '@/lib/db'
 import { desc, eq, and } from 'drizzle-orm'
 import { z } from 'zod'
@@ -26,18 +27,17 @@ export async function POST(req: NextRequest) {
     // Save user message
     await db.insert(chatMessages).values({ userId, conversationId, role: 'user', content: message })
 
-    // Update conversation timestamp + auto-title from first message
+    // Update conversation timestamp
     const conv = await db.query.conversations.findFirst({
       where: (c, { eq }) => eq(c.id, conversationId),
     })
+    await db.update(conversations)
+      .set({ lastMessageAt: new Date() })
+      .where(eq(conversations.id, conversationId))
+
+    // Auto-generate title via LLM on first message (fire-and-forget)
     if (conv?.title === 'Nouvelle conversation') {
-      await db.update(conversations)
-        .set({ title: message.slice(0, 80), lastMessageAt: new Date() })
-        .where(eq(conversations.id, conversationId))
-    } else {
-      await db.update(conversations)
-        .set({ lastMessageAt: new Date() })
-        .where(eq(conversations.id, conversationId))
+      generateConversationTitle(conversationId, message).catch(console.error)
     }
 
     // Load conversation history (last 20 messages of THIS conversation)
@@ -160,5 +160,32 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error('[chat/history]', error)
     return NextResponse.json({ error: 'Failed' }, { status: 500 })
+  }
+}
+
+async function generateConversationTitle(conversationId: string, firstMessage: string) {
+  try {
+    const response = await callLLM({
+      model: MODELS.LIGHT,
+      max_tokens: 30,
+      temperature: 0.3,
+      messages: [{
+        role: 'user',
+        content: `Génère un titre court (3-6 mots max, en français) pour une conversation qui commence par ce message. Réponds UNIQUEMENT avec le titre, sans guillemets ni ponctuation finale.\n\nMessage: "${firstMessage.slice(0, 200)}"`,
+      }],
+    })
+
+    const title = response.choices[0]?.message?.content?.trim().slice(0, 80)
+    if (title) {
+      await db.update(conversations)
+        .set({ title })
+        .where(eq(conversations.id, conversationId))
+    }
+  } catch (e) {
+    console.error('[chat/title]', e)
+    // Fallback: use truncated message
+    await db.update(conversations)
+      .set({ title: firstMessage.slice(0, 60) })
+      .where(eq(conversations.id, conversationId))
   }
 }
