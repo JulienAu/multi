@@ -126,6 +126,7 @@ export const openclawInstances = pgTable('openclaw_instances', {
   port:          integer('port').notNull(),
   gatewayToken:  varchar('gateway_token', { length: 255 }).notNull(),
   status:        openclawStatusEnum('status').default('provisioning').notNull(),
+  autoApprove:   boolean('auto_approve').default(false).notNull(),
   lastError:     text('last_error'),
   lastHealthAt:  timestamp('last_health_at'),
   createdAt:     timestamp('created_at').defaultNow().notNull(),
@@ -137,10 +138,29 @@ export const openclawInstances = pgTable('openclaw_instances', {
 export const chatMessages = pgTable('chat_messages', {
   id:         uuid('id').primaryKey().defaultRandom(),
   userId:     uuid('user_id').references(() => users.id).notNull(),
-  role:       varchar('role', { length: 20 }).notNull(), // 'user' | 'assistant'
+  role:       varchar('role', { length: 20 }).notNull(), // 'user' | 'assistant' | 'tool'
   content:    text('content').notNull(),
   metadata:   jsonb('metadata').$type<Record<string, unknown>>(),
   createdAt:  timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─── TOOL APPROVALS ─────────────────────────────────────────────────────────
+
+export const toolApprovalEnum = pgEnum('tool_approval_decision', [
+  'pending', 'allow-once', 'allow-always', 'deny',
+])
+
+export const toolApprovals = pgTable('tool_approvals', {
+  id:            uuid('id').primaryKey().defaultRandom(),
+  userId:        uuid('user_id').references(() => users.id).notNull(),
+  openclawId:    varchar('openclaw_id', { length: 255 }).notNull(), // approval ID from OpenClaw
+  toolType:      varchar('tool_type', { length: 20 }).notNull(), // 'exec' | 'plugin'
+  command:       text('command'),
+  title:         text('title'),
+  description:   text('description'),
+  decision:      toolApprovalEnum('decision').default('pending').notNull(),
+  decidedAt:     timestamp('decided_at'),
+  createdAt:     timestamp('created_at').defaultNow().notNull(),
 })
 
 // ─── LEADS ──────────────────────────────────────────────────────────────────
@@ -185,3 +205,4 @@ export type AnalyticsEvent    = typeof analyticsEvents.$inferSelect
 export type ActionValidation  = typeof actionValidations.$inferSelect
 export type OpenclawInstance  = typeof openclawInstances.$inferSelect
 export type ChatMessage       = typeof chatMessages.$inferSelect
+export type ToolApproval      = typeof toolApprovals.$inferSelect

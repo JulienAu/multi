@@ -26,7 +26,10 @@
       "Bash(gh search:*)",
       "Bash(npm search:*)",
       "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(''''name:'''', d.get\\(''''name'''',''''''''\\)\\); print\\(''''bin:'''', d.get\\(''''bin'''',{}\\)\\); print\\(''''exports:'''', list\\(d.get\\(''''exports'''',{}\\).keys\\(\\)\\)[:20]\\)\")",
-      "Bash(docker restart:*)"
+      "Bash(docker restart:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh repo:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }
