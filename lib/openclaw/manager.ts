@@ -79,42 +79,132 @@ ${scorecard ? Object.entries(scorecard).map(([k, v]) => `- ${k} : ${v}%`).join('
 - Si on te demande de générer du contenu, adapte-le au ton de la marque défini dans le BUSINESS.md
 `
 
-  // SOUL.md = résumé concis, pas le doc complet. L'agent peut lire workspace/BUSINESS.md si besoin.
-  const sector = answers?.sector ?? 'Non renseigné'
-  const name = answers?.name ?? 'Non renseigné'
-  const location = answers?.location ?? 'Non renseigné'
-  const offer = answers?.offer ?? ''
-  const customer = answers?.customer ?? ''
-  const goal = answers?.goal ?? ''
-  const tone = answers?.tone ?? ''
-  const delegate = Array.isArray(answers?.delegate) ? (answers.delegate as string[]).join(', ') : ''
-
+  // SOUL.md = résumé structuré (4-6K chars) du BUSINESS.md.
+  // L'agent peut lire workspace/BUSINESS.md pour les détails complets.
   const soulMd = latestDoc?.content
-    ? `# Identité Business — Résumé
-
-- **Nom :** ${name}
-- **Secteur :** ${sector}
-- **Localisation :** ${location}
-- **Offre :** ${offer}
-- **Client idéal :** ${customer}
-- **Objectif 12 mois :** ${goal}
-- **Ton de marque :** ${tone}
-- **Fonctions déléguées :** ${delegate}
-
-## Instructions importantes
-
-Le document BUSINESS.md complet (${latestDoc.lineCount ?? '?'} lignes, ${latestDoc.sectionCount ?? '?'} sections) est disponible dans ton workspace.
-**Lis le fichier workspace/BUSINESS.md** avec l'outil Read quand tu as besoin de détails sur :
-- La stratégie d'acquisition et les canaux
-- Les cibles prioritaires et leur approche
-- Le calendrier marketing
-- Les contraintes et guardrails
-- La voix et le ton de la marque
-
-Ne devine pas — lis le fichier.`
+    ? buildSoulSummary(latestDoc.content, answers, latestDoc.lineCount, latestDoc.sectionCount)
     : '# BUSINESS.md\n\nAucun BUSINESS.md disponible. Suggère à l\'Architecte de compléter le wizard pour en générer un.'
 
   return { agentsMd, soulMd }
+}
+
+/**
+ * Build a structured summary (4-6K chars) of the BUSINESS.md for SOUL.md.
+ * Extracts key sections and adds instructions to read the full file.
+ */
+function buildSoulSummary(
+  fullContent: string,
+  answers: Record<string, string | string[]> | null,
+  lineCount: number | null,
+  sectionCount: number | null,
+): string {
+  // Extract sections from the markdown
+  const sections = new Map<string, string>()
+  const lines = fullContent.split('\n')
+  let currentSection = ''
+  let currentContent: string[] = []
+
+  for (const line of lines) {
+    if (line.startsWith('## ') || line.startsWith('# ')) {
+      if (currentSection) {
+        sections.set(currentSection, currentContent.join('\n').trim())
+      }
+      currentSection = line.replace(/^#+\s*/, '').replace(/^\d+\.\s*/, '').trim()
+      currentContent = []
+    } else {
+      currentContent.push(line)
+    }
+  }
+  if (currentSection) {
+    sections.set(currentSection, currentContent.join('\n').trim())
+  }
+
+  // Helper: truncate a section to max chars
+  const truncate = (text: string, max: number) =>
+    text.length > max ? text.slice(0, max).replace(/\n[^\n]*$/, '') + '\n[...]' : text
+
+  // Build summary with key info from wizard answers + extracted sections
+  const sector = (answers?.sector as string) ?? 'Non renseigné'
+  const name = (answers?.name as string) ?? 'Non renseigné'
+  const location = (answers?.location as string) ?? 'Non renseigné'
+  const offer = (answers?.offer as string) ?? ''
+  const customer = (answers?.customer as string) ?? ''
+  const revenue = (answers?.revenue as string) ?? ''
+  const goal = (answers?.goal as string) ?? ''
+  const tone = (answers?.tone as string) ?? ''
+  const channels = Array.isArray(answers?.channels) ? (answers!.channels as string[]).join(', ') : ''
+  const delegate = Array.isArray(answers?.delegate) ? (answers!.delegate as string[]).join(', ') : ''
+  const autonomy = (answers?.autonomy as string) ?? ''
+
+  // Find key sections (try common names from BUSINESS.md)
+  const findSection = (...keys: string[]) => {
+    for (const key of keys) {
+      for (const [name, content] of sections) {
+        if (name.toLowerCase().includes(key.toLowerCase())) return content
+      }
+    }
+    return ''
+  }
+
+  const valueSection = truncate(findSection('VALUE', 'OFFRE'), 1000)
+  const acquisitionSection = truncate(findSection('ACQUISITION', 'TROUVER'), 800)
+  const leverageSection = truncate(findSection('LEVERAGE', 'CONVERTIR'), 600)
+  const ciblesSection = truncate(findSection('CIBLES', 'PRIORIT'), 800)
+  const contraintesSection = truncate(findSection('CONTRAINTES', 'LIMITES', 'JAMAIS'), 600)
+  const voixSection = truncate(findSection('VOIX', 'TON', 'MARQUE'), 500)
+  const calendrierSection = truncate(findSection('CALENDRIER'), 500)
+
+  return `# Résumé BUSINESS.md — ${name}
+
+## Identité
+- **Nom :** ${name}
+- **Secteur :** ${sector}
+- **Localisation :** ${location}
+- **Revenus actuels :** ${revenue}
+- **Objectif 12 mois :** ${goal}
+- **Ton de marque :** ${tone}
+- **Niveau d'autonomie :** ${autonomy}
+- **Canaux d'acquisition :** ${channels}
+- **Fonctions déléguées :** ${delegate}
+
+## L'offre
+${offer}
+${valueSection ? `\n${valueSection}` : ''}
+
+## Client idéal
+${customer}
+
+## Acquisition
+${acquisitionSection || 'Voir BUSINESS.md pour les détails.'}
+
+## Conversion
+${leverageSection || 'Voir BUSINESS.md pour les détails.'}
+
+## Cibles prioritaires
+${ciblesSection || 'Voir BUSINESS.md pour les détails.'}
+
+## Contraintes et limites
+${contraintesSection || 'Voir BUSINESS.md pour les détails.'}
+
+## Voix et ton
+${voixSection || tone}
+
+## Calendrier marketing
+${calendrierSection || 'Voir BUSINESS.md pour les détails.'}
+
+---
+## IMPORTANT — Accès au document complet
+
+Ce résumé couvre les points essentiels. Le BUSINESS.md complet (${lineCount ?? '?'} lignes, ${sectionCount ?? '?'} sections) est dans ton workspace.
+
+**Utilise l'outil Read sur workspace/BUSINESS.md** quand tu as besoin de :
+- Détails précis sur les prix, marges, tableaux
+- Noms d'entreprises cibles, adresses, contacts
+- Calendrier marketing détaillé mois par mois
+- Liste complète des actions interdites (guardrails)
+- Exemples de ton de marque (OUI / NON)
+
+Ne devine jamais un détail — lis le fichier.`
 }
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
