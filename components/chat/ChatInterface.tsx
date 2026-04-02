@@ -40,6 +40,7 @@ export function ChatInterface() {
   const [deployLogs, setDeployLogs] = useState<string[]>([])
   const [deployError, setDeployError] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [searchQuery, setSearchQuery] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const currentAssistantId = useRef<string | null>(null)
@@ -51,9 +52,10 @@ export function ChatInterface() {
     try { const r = await fetch('/api/openclaw/status'); return await r.json() } catch { return null }
   }, [])
 
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (query?: string) => {
     try {
-      const r = await fetch('/api/conversations')
+      const url = query ? `/api/conversations?q=${encodeURIComponent(query)}` : '/api/conversations'
+      const r = await fetch(url)
       const d = await r.json()
       setConversations(d.conversations ?? [])
       return d.conversations ?? []
@@ -122,6 +124,32 @@ export function ChatInterface() {
     if (sending) return
     setActiveConvId(convId)
     loadMessages(convId)
+  }
+
+  // ─── Delete conversation ──────────────────────────────────────────────
+  const deleteConversation = async (convId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm('Supprimer cette conversation ?')) return
+    await fetch('/api/conversations', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: convId }),
+    })
+    if (activeConvId === convId) {
+      setActiveConvId(null)
+      setMessages([])
+    }
+    fetchConversations(searchQuery || undefined)
+  }
+
+  // ─── Search conversations ─────────────────────────────────────────────
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleSearch = (query: string) => {
+    setSearchQuery(query)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => {
+      fetchConversations(query || undefined)
+    }, 300)
   }
 
   // ─── Provisioning ─────────────────────────────────────────────────────
@@ -263,36 +291,52 @@ export function ChatInterface() {
     <div className="flex h-full">
       {/* Conversation sidebar */}
       <div className="w-56 shrink-0 border-r border-ui-border bg-ui-bg-secondary flex flex-col">
-        <div className="p-3 border-b border-ui-border">
+        <div className="p-3 border-b border-ui-border space-y-2">
           <button
             onClick={() => createConversation()}
             className="w-full px-3 py-2 rounded-lg bg-brand-violet text-white text-xs font-medium hover:bg-brand-violet-dark transition-colors"
           >
             + Nouvelle conversation
           </button>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => handleSearch(e.target.value)}
+            placeholder="Rechercher..."
+            className="w-full px-3 py-1.5 rounded-lg border border-ui-border bg-ui-bg text-xs text-ui-text-primary placeholder:text-ui-text-tertiary focus:outline-none focus:border-brand-violet transition-colors"
+          />
         </div>
         <div className="flex-1 overflow-y-auto py-1">
           {conversations.map(conv => (
-            <button
+            <div
               key={conv.id}
               onClick={() => switchConversation(conv.id)}
-              className={`w-full text-left px-3 py-2.5 text-xs transition-colors ${
+              className={`group w-full text-left px-3 py-2.5 text-xs transition-colors cursor-pointer flex items-start justify-between gap-1 ${
                 activeConvId === conv.id
                   ? 'bg-brand-violet-light text-brand-violet font-medium'
                   : 'text-ui-text-secondary hover:bg-ui-bg-tertiary'
               }`}
             >
-              <p className="truncate">{conv.title}</p>
-              {conv.lastMessageAt && (
-                <p className="text-[10px] text-ui-text-tertiary mt-0.5">
-                  {new Date(conv.lastMessageAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                </p>
-              )}
-            </button>
+              <div className="min-w-0 flex-1">
+                <p className="truncate">{conv.title}</p>
+                {conv.lastMessageAt && (
+                  <p className="text-[10px] text-ui-text-tertiary mt-0.5">
+                    {new Date(conv.lastMessageAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={(e) => deleteConversation(conv.id, e)}
+                className="shrink-0 opacity-0 group-hover:opacity-100 text-ui-text-tertiary hover:text-status-error transition-all p-0.5"
+                title="Supprimer"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+              </button>
+            </div>
           ))}
           {conversations.length === 0 && (
             <p className="text-[10px] text-ui-text-tertiary text-center py-4 px-3">
-              Aucune conversation. Cliquez sur + pour commencer.
+              {searchQuery ? 'Aucun resultat.' : 'Aucune conversation. Cliquez sur + pour commencer.'}
             </p>
           )}
         </div>
