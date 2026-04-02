@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { readFile, writeFile, readdir, stat } from 'fs/promises'
+import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
 import { join, extname } from 'path'
 import { z } from 'zod'
 
@@ -92,6 +92,42 @@ export async function PUT(req: NextRequest) {
   } catch (error) {
     console.error('[openclaw/files/put]', error)
     return NextResponse.json({ error: 'Failed to write file' }, { status: 500 })
+  }
+}
+
+const deleteSchema = z.object({
+  path: z.string().min(1),
+})
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const userId = await getCurrentUserId()
+    if (!userId) {
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    }
+
+    const instance = await getOpenClawInstance(userId)
+    if (!instance) {
+      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
+    }
+
+    const { path: filePath } = deleteSchema.parse(await req.json())
+    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
+
+    const resolved = join(workspaceDir, filePath)
+    if (!resolved.startsWith(workspaceDir)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
+
+    await rm(resolved, { recursive: true })
+
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 })
+    }
+    console.error('[openclaw/files/delete]', error)
+    return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })
   }
 }
 

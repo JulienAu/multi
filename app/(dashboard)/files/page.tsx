@@ -110,6 +110,19 @@ export default function FilesPage() {
 
   const { dirs, files: currentFiles } = loading ? { dirs: new Map(), files: [] } : getDirectoryContents()
 
+  // Delete file or folder
+  const deleteFile = async (path: string, name: string, isDir: boolean) => {
+    if (!confirm(`Supprimer ${isDir ? 'le dossier' : 'le fichier'} "${name}" ?`)) return
+    await fetch('/api/openclaw/files', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    })
+    if (editingFile?.path === path) setEditingFile(null)
+    if (previewPath === path) setPreviewPath(null)
+    fetchFiles()
+  }
+
   // Breadcrumb
   const breadcrumbs = currentDir ? currentDir.split('/') : []
 
@@ -285,7 +298,7 @@ export default function FilesPage() {
               <button
                 key={`dir-${dirName}`}
                 onClick={() => navigateToDir(currentDir ? `${currentDir}/${dirName}` : dirName)}
-                className={`w-full flex items-center justify-between px-4 py-2.5 hover:bg-ui-bg-tertiary transition-colors ${(i > 0 || currentDir) ? 'border-t border-ui-border' : ''}`}
+                className={`group w-full flex items-center justify-between px-4 py-2.5 hover:bg-ui-bg-tertiary transition-colors ${(i > 0 || currentDir) ? 'border-t border-ui-border' : ''}`}
               >
                 <div className="flex items-center gap-3">
                   <span className="text-sm">📁</span>
@@ -294,7 +307,12 @@ export default function FilesPage() {
                     <p className="text-[10px] text-ui-text-tertiary">{info.fileCount} fichier{info.fileCount > 1 ? 's' : ''} — {formatSize(info.totalSize)}</p>
                   </div>
                 </div>
-                <span className="text-ui-text-tertiary text-xs">→</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={(e) => { e.stopPropagation(); deleteFile(currentDir ? `${currentDir}/${dirName}` : dirName, dirName, true) }} className="opacity-0 group-hover:opacity-100 text-ui-text-tertiary hover:text-status-error transition-all p-0.5" title="Supprimer">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                  </button>
+                  <span className="text-ui-text-tertiary text-xs">→</span>
+                </div>
               </button>
             ))}
 
@@ -321,6 +339,9 @@ export default function FilesPage() {
                     </button>
                   )}
                   <a href={getFileUrl(file.path)} target="_blank" className="px-3 py-1 text-xs font-medium rounded-md border border-ui-border text-ui-text-secondary hover:bg-ui-bg-tertiary transition-colors">Ouvrir</a>
+                  <button onClick={() => deleteFile(file.path, file.name, false)} className="px-2 py-1 text-xs text-ui-text-tertiary hover:text-status-error transition-colors" title="Supprimer">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                  </button>
                 </div>
               </div>
             ))}
