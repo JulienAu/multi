@@ -184,6 +184,8 @@ export function ChatInterface() {
     setInput('')
     setSending(true)
 
+    const assistantId = `resp-${Date.now()}`
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -191,21 +193,67 @@ export function ChatInterface() {
         body: JSON.stringify({ message: text }),
       })
 
-      const data = await res.json()
-      const assistantMsg: Message = {
-        id: `resp-${Date.now()}`,
-        role: 'assistant',
-        content: res.ok ? data.response : `Erreur : ${data.error ?? 'Impossible de contacter l\'agent.'}`,
-        createdAt: new Date().toISOString(),
+      if (!res.ok) {
+        const data = await res.json()
+        setMessages(prev => [...prev, {
+          id: assistantId,
+          role: 'assistant',
+          content: `Erreur : ${data.error ?? 'Impossible de contacter l\'agent.'}`,
+          createdAt: new Date().toISOString(),
+        }])
+        return
       }
-      setMessages(prev => [...prev, assistantMsg])
-    } catch {
+
+      // Create empty assistant message, then stream into it
       setMessages(prev => [...prev, {
-        id: `err-${Date.now()}`,
+        id: assistantId,
         role: 'assistant',
-        content: 'Erreur de connexion. Verifiez que votre agent est en ligne.',
+        content: '',
         createdAt: new Date().toISOString(),
       }])
+
+      const reader = res.body?.getReader()
+      if (!reader) throw new Error('No stream')
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? '' // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') continue
+
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.content) {
+              setMessages(prev => prev.map(m =>
+                m.id === assistantId
+                  ? { ...m, content: m.content + parsed.content }
+                  : m
+              ))
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch {
+      setMessages(prev => {
+        const existing = prev.find(m => m.id === assistantId)
+        if (existing && existing.content) return prev // Keep partial response
+        return [...prev.filter(m => m.id !== assistantId), {
+          id: assistantId,
+          role: 'assistant' as const,
+          content: 'Erreur de connexion. Verifiez que votre agent est en ligne.',
+          createdAt: new Date().toISOString(),
+        }]
+      })
     } finally {
       setSending(false)
       inputRef.current?.focus()

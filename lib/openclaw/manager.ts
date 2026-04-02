@@ -205,7 +205,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
           console.log('[openclaw] config found, patching...')
 
           // === PHASE 3: Patch config ===
-          const rawModel = process.env.LLM_MODEL_GENERATION || 'qwen/qwen3.6-plus-preview:free'
+          // OpenClaw agent model (needs tool support — separate from BUSINESS.md generation)
+          const rawModel = process.env.LLM_MODEL_OPENCLAW || 'minimax/minimax-m2.5'
           const openclawModel = rawModel.startsWith('openrouter/') ? rawModel : `openrouter/${rawModel}`
 
           config.agents = config.agents || {}
@@ -292,13 +293,47 @@ export async function getOpenClawInstance(userId: string) {
 }
 
 /**
- * Send a message to the user's OpenClaw agent via OpenAI-compatible HTTP API.
- * Uses /v1/chat/completions endpoint (enabled in config patch).
+ * Send a message to OpenClaw and return the full response (non-streaming).
  */
 export async function sendToOpenClaw(
   instance: { port: number; gatewayToken: string; containerName: string },
   message: string,
 ): Promise<string> {
+  const response = await fetchOpenClaw(instance, message, false)
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`OpenClaw ${response.status}: ${text}`)
+  }
+
+  const data = await response.json()
+  let content = data.choices?.[0]?.message?.content ?? JSON.stringify(data)
+  content = cleanOpenClawResponse(content)
+  return content
+}
+
+/**
+ * Send a message to OpenClaw and return the raw streaming Response.
+ */
+export async function streamFromOpenClaw(
+  instance: { port: number; gatewayToken: string; containerName: string },
+  message: string,
+): Promise<Response> {
+  const response = await fetchOpenClaw(instance, message, true)
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`OpenClaw ${response.status}: ${text}`)
+  }
+
+  return response
+}
+
+async function fetchOpenClaw(
+  instance: { port: number; gatewayToken: string; containerName: string },
+  message: string,
+  stream: boolean,
+): Promise<Response> {
   const hosts = [
     `${instance.containerName}:18789`,
     `host.docker.internal:${instance.port}`,
@@ -317,27 +352,21 @@ export async function sendToOpenClaw(
           model: 'openclaw/default',
           messages: [{ role: 'user', content: message }],
           thinking: { type: 'enabled', budget_tokens: 2048 },
+          stream,
         }),
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(180_000),
       })
-
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(`OpenClaw ${response.status}: ${text}`)
-      }
-
-      const data = await response.json()
-      // OpenAI-compatible response format
-      let content = data.choices?.[0]?.message?.content ?? JSON.stringify(data)
-      // Strip OpenClaw internal commands (e.g. "/approve ..." prefix)
-      content = content.replace(/^\/approve\s+\S+\s+(allow-once|allow-always|deny)\s*/i, '').trim()
-      return content
+      return response
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e)
     }
   }
 
   throw new Error(`Could not reach OpenClaw: ${lastError}`)
+}
+
+export function cleanOpenClawResponse(content: string): string {
+  return content.replace(/^\/approve\s+\S+\s+(allow-once|allow-always|deny)\s*/i, '').trim()
 }
 
 export async function refreshWorkspace(userId: string): Promise<void> {
