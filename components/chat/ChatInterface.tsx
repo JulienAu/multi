@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface Message {
   id: string
@@ -382,7 +384,13 @@ export function ChatInterface() {
               <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
                 msg.role === 'user' ? 'bg-brand-violet text-white rounded-br-md' : 'bg-ui-bg-tertiary text-ui-text-primary rounded-bl-md'
               }`}>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                {msg.role === 'user' ? (
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                ) : (
+                  <div className="text-sm leading-relaxed prose-chat">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  </div>
+                )}
                 {msg.content && <p className={`text-[10px] mt-1 ${msg.role === 'user' ? 'text-white/60' : 'text-ui-text-tertiary'}`}>{new Date(msg.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>}
               </div>
             </div>
