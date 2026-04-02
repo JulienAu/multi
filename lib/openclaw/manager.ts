@@ -433,6 +433,18 @@ export async function provisionOpenClaw(userId: string): Promise<{
             'alpine', 'chown', '-R', '1000:1000', '/fix',
           ])
 
+          // === PHASE 4b: Install default skills ===
+          console.log('[openclaw] installing default skills...')
+          try {
+            await dockerExec([
+              'exec', containerName, 'sh', '-c',
+              'mkdir -p /home/node/.openclaw/workspace/skills && git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git /home/node/.openclaw/workspace/skills/ui-ux-pro-max-skill 2>&1 || true',
+            ])
+            console.log('[openclaw] skill ui-ux-pro-max-skill installed')
+          } catch (e) {
+            console.log('[openclaw] skill install failed:', e instanceof Error ? e.message : e)
+          }
+
           // === PHASE 5: Set exec approvals to auto-approve all ===
           console.log('[openclaw] setting exec approvals to auto-approve...')
           try {
