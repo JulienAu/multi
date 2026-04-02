@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
-import { getOpenClawInstance } from '@/lib/openclaw/manager'
+import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '@/lib/openclaw/manager'
 import { sessionManager } from '@/lib/openclaw/session-manager'
 import { callLLM, MODELS } from '@/lib/llm/client'
 import { db, chatMessages, conversations } from '@/lib/db'
@@ -11,6 +11,7 @@ import type { OpenClawEvent } from '@/lib/openclaw/ws-client'
 const sendSchema = z.object({
   message: z.string().min(1).max(10000),
   conversationId: z.string().uuid(),
+  images: z.array(z.string()).optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     if (!maybeUserId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
     const userId: string = maybeUserId
 
-    const { message, conversationId } = sendSchema.parse(await req.json())
+    const { message, conversationId, images } = sendSchema.parse(await req.json())
 
     const instance = await getOpenClawInstance(userId)
     if (!instance || instance.status !== 'running') {
@@ -38,6 +39,14 @@ export async function POST(req: NextRequest) {
       .where(eq(conversations.id, conversationId))
     if (conv?.title === 'Nouvelle conversation') {
       generateConversationTitle(conversationId, message).catch(console.error)
+    }
+
+    const hasImages = images && images.length > 0
+
+    // For messages with images: use HTTP multimodal endpoint
+    // For text-only: use WebSocket (full agent mode with tool loop)
+    if (hasImages) {
+      return handleMultimodalChat(userId, conversationId, message, images!, instance)
     }
 
     // Connect via WebSocket (full agent mode with tool loop)
@@ -166,6 +175,93 @@ export async function GET(req: NextRequest) {
     console.error('[chat/history]', error)
     return NextResponse.json({ error: 'Failed' }, { status: 500 })
   }
+}
+
+/**
+ * Handle messages with images via HTTP multimodal endpoint.
+ * Uses OpenAI-compatible /v1/chat/completions with content blocks.
+ */
+async function handleMultimodalChat(
+  userId: string,
+  conversationId: string,
+  message: string,
+  imageDataUrls: string[],
+  instance: { port: number; gatewayToken: string; containerName: string },
+) {
+  // Build multimodal content blocks
+  const contentBlocks: { type: string; text?: string; image_url?: { url: string } }[] = [
+    { type: 'text', text: message },
+  ]
+  for (const dataUrl of imageDataUrls) {
+    contentBlocks.push({ type: 'image_url', image_url: { url: dataUrl } })
+  }
+
+  // Load history (text only for previous messages)
+  const history = await db.query.chatMessages.findMany({
+    where: (m, { eq, and }) => and(eq(m.userId, userId), eq(m.conversationId, conversationId)),
+    orderBy: (m, { desc }) => [desc(m.createdAt)],
+    limit: 10,
+  })
+  const chatHistory = history.reverse().slice(0, -1).map(m => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }))
+
+  // Add current multimodal message
+  const messages = [...chatHistory, { role: 'user' as const, content: contentBlocks }]
+
+  const openclawResponse = await streamFromOpenClaw(instance, messages as { role: string; content: string }[])
+  if (!openclawResponse.body) {
+    return NextResponse.json({ error: 'No stream body' }, { status: 500 })
+  }
+
+  const openclawReader = openclawResponse.body.getReader()
+  const decoder = new TextDecoder()
+  let fullContent = ''
+  let clientClosed = false
+  const encoder = new TextEncoder()
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        while (true) {
+          const { done, value } = await openclawReader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6).trim()
+            if (data === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed.choices?.[0]?.delta?.content
+              if (delta) {
+                fullContent += delta
+                if (!clientClosed) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'delta', content: delta })}\n\n`))
+                }
+              }
+            } catch {}
+          }
+        }
+      } catch (e) {
+        console.error('[chat/multimodal]', e)
+      } finally {
+        fullContent = cleanOpenClawResponse(fullContent)
+        if (!clientClosed) {
+          try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`)); controller.close() } catch {}
+        }
+        if (fullContent) {
+          await db.insert(chatMessages).values({ userId, conversationId, role: 'assistant', content: fullContent }).catch(console.error)
+        }
+      }
+    },
+    cancel() { clientClosed = true },
+  })
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+  })
 }
 
 async function generateConversationTitle(conversationId: string, firstMessage: string) {

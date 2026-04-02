@@ -43,7 +43,7 @@ export function ChatInterface() {
   const [deployError, setDeployError] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
-  const [attachments, setAttachments] = useState<{ path: string; name: string; type: string }[]>([])
+  const [attachments, setAttachments] = useState<{ path: string; name: string; type: string; dataUrl?: string }[]>([])
   const [uploading, setUploading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -202,7 +202,7 @@ export function ChatInterface() {
         const res = await fetch('/api/chat/upload', { method: 'POST', body: formData })
         if (res.ok) {
           const data = await res.json()
-          setAttachments(prev => [...prev, { path: data.path, name: data.name, type: data.type }])
+          setAttachments(prev => [...prev, { path: data.path, name: data.name, type: data.type, dataUrl: data.dataUrl }])
         }
       } catch { /* ignore */ }
     }
@@ -227,15 +227,22 @@ export function ChatInterface() {
       convId = await createConversation()
     }
 
-    // Build message with attachments context
+    // Build message: images as base64 data URLs, files as workspace paths
     let fullMessage = text
-    if (attachments.length > 0) {
-      const fileList = attachments.map(a => {
-        const isImage = a.type.startsWith('image/')
-        return `- ${a.name} (${isImage ? 'image' : 'fichier'}, chemin: workspace/${a.path})`
-      }).join('\n')
-      fullMessage = `${text}\n\n[Fichiers joints dans le workspace de l'agent:]\n${fileList}`
+    const imageAttachments = attachments.filter(a => a.dataUrl)
+    const fileAttachments = attachments.filter(a => !a.dataUrl)
+
+    if (imageAttachments.length > 0) {
+      const imageRefs = imageAttachments.map(a => `[Image jointe: ${a.name}]`).join('\n')
+      fullMessage = `${text}\n\n${imageRefs}`
     }
+    if (fileAttachments.length > 0) {
+      const fileList = fileAttachments.map(a => `- ${a.name} (chemin: workspace/${a.path})`).join('\n')
+      fullMessage = `${fullMessage}\n\n[Fichiers joints dans le workspace:]\n${fileList}`
+    }
+
+    // Pass image data URLs separately for multimodal
+    const imageDataUrls = imageAttachments.map(a => a.dataUrl!).filter(Boolean)
 
     const displayContent = text + (attachments.length > 0
       ? '\n' + attachments.map(a => `📎 ${a.name}`).join('\n')
@@ -251,7 +258,7 @@ export function ChatInterface() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: fullMessage, conversationId: convId }),
+        body: JSON.stringify({ message: fullMessage, conversationId: convId, images: imageDataUrls }),
       })
 
       if (!res.ok) {

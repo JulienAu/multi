@@ -30,14 +30,16 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer())
     await writeFile(filePath, buffer)
 
-    // Relative path for the agent
     const relativePath = `uploads/${filename}`
+    const isImage = file.type.startsWith('image/')
 
     return NextResponse.json({
       path: relativePath,
       name: file.name,
       size: file.size,
       type: file.type,
+      // For images, include base64 data URL for multimodal LLM
+      ...(isImage && { dataUrl: `data:${file.type};base64,${buffer.toString('base64')}` }),
     })
   } catch (error) {
     console.error('[chat/upload]', error)
