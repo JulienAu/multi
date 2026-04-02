@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { readFile, readdir, stat } from 'fs/promises'
+import { readFile, writeFile, readdir, stat } from 'fs/promises'
 import { join, extname } from 'path'
+import { z } from 'zod'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -57,6 +58,40 @@ export async function GET(req: NextRequest) {
     }
     console.error('[openclaw/files]', error)
     return NextResponse.json({ error: 'Failed to read file' }, { status: 500 })
+  }
+}
+
+const putSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+})
+
+export async function PUT(req: NextRequest) {
+  try {
+    const userId = await getCurrentUserId()
+    if (!userId) {
+      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    }
+
+    const instance = await getOpenClawInstance(userId)
+    if (!instance) {
+      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
+    }
+
+    const { path: filePath, content } = putSchema.parse(await req.json())
+    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
+
+    const resolved = join(workspaceDir, filePath)
+    if (!resolved.startsWith(workspaceDir)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+    }
+
+    await writeFile(resolved, content, 'utf-8')
+
+    return NextResponse.json({ ok: true, path: filePath })
+  } catch (error) {
+    console.error('[openclaw/files/put]', error)
+    return NextResponse.json({ error: 'Failed to write file' }, { status: 500 })
   }
 }
 
