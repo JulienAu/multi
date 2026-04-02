@@ -31,7 +31,8 @@
       "Bash(gh repo:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import json,sys; c=json.load\\(sys.stdin\\); print\\(''''model:'''', c.get\\(''''agents'''',{}\\).get\\(''''defaults'''',{}\\).get\\(''''model'''',{}\\).get\\(''''primary'''',''''?''''\\)\\)\")"
     ]
   }
 }

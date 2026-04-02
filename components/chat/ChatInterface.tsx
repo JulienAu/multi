@@ -4,19 +4,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface Message {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant'
   content: string
   createdAt: string
-}
-
-interface ToolRequest {
-  id: string
-  toolType: 'exec' | 'plugin'
-  command?: string
-  title?: string
-  description?: string
-  status: 'pending' | 'resolved'
-  decision?: string
 }
 
 interface AgentStatus {
@@ -28,90 +18,61 @@ interface AgentStatus {
   lastError?: string | null
 }
 
-type DeployStep = {
-  label: string
-  status: 'pending' | 'active' | 'done' | 'error'
-}
+type DeployStep = { label: string; status: 'pending' | 'active' | 'done' | 'error' }
 
 export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([])
-  const [toolRequests, setToolRequests] = useState<Map<string, ToolRequest>>(new Map())
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [autoApprove, setAutoApprove] = useState(false)
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
   const [provisioning, setProvisioning] = useState(false)
   const [loading, setLoading] = useState(true)
   const [deploySteps, setDeploySteps] = useState<DeployStep[]>([])
   const [deployLogs, setDeployLogs] = useState<string[]>([])
   const [deployError, setDeployError] = useState<string | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const currentAssistantId = useRef<string | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
   const checkStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/openclaw/status')
-      return await res.json()
-    } catch { return null }
+    try { const res = await fetch('/api/openclaw/status'); return await res.json() } catch { return null }
   }, [])
 
   useEffect(() => {
     Promise.all([
       checkStatus().then(setAgentStatus),
       fetch('/api/chat').then(r => r.json()).then(d => setMessages(d.messages ?? [])),
-      fetch('/api/chat/auto-approve').then(r => r.json()).then(d => setAutoApprove(d.autoApprove ?? false)),
     ]).finally(() => setLoading(false))
   }, [checkStatus])
 
-  useEffect(scrollToBottom, [messages, toolRequests])
+  useEffect(scrollToBottom, [messages])
+
+  // Timer for elapsed seconds while sending
+  useEffect(() => {
+    if (sending) {
+      setElapsedSeconds(0)
+      timerRef.current = setInterval(() => setElapsedSeconds(s => s + 1), 1000)
+    } else {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      setElapsedSeconds(0)
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [sending])
 
   const fetchLogs = useCallback(async () => {
     try {
       const res = await fetch('/api/openclaw/logs')
       const data = await res.json()
-      if (data.logs) {
-        setDeployLogs(data.logs.split('\n').filter((l: string) => l.trim()).slice(-10))
-      }
+      if (data.logs) setDeployLogs(data.logs.split('\n').filter((l: string) => l.trim()).slice(-10))
     } catch { /* ignore */ }
   }, [])
 
   const updateStep = (index: number, status: DeployStep['status']) => {
     setDeploySteps(prev => prev.map((s, i) => i === index ? { ...s, status } : s))
-  }
-
-  // ─── Auto-approve toggle ──────────────────────────────────────────────
-  const toggleAutoApprove = async () => {
-    const newVal = !autoApprove
-    setAutoApprove(newVal)
-    await fetch('/api/chat/auto-approve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: newVal }),
-    })
-  }
-
-  // ─── Tool approval ────────────────────────────────────────────────────
-  const handleApproval = async (openclawId: string, decision: 'allow-once' | 'allow-always' | 'deny') => {
-    try {
-      await fetch('/api/chat/approve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ openclawId, decision }),
-      })
-      setToolRequests(prev => {
-        const next = new Map(prev)
-        const req = next.get(openclawId)
-        if (req) next.set(openclawId, { ...req, status: 'resolved', decision })
-        return next
-      })
-    } catch (e) {
-      console.error('Approval failed', e)
-    }
   }
 
   // ─── Provisioning ─────────────────────────────────────────────────────
@@ -120,86 +81,41 @@ export function ChatInterface() {
     setDeployError(null)
     setDeploySteps([
       { label: 'Lancement du provisioning', status: 'active' },
-      { label: 'Creation du workspace (AGENTS.md, SOUL.md)', status: 'pending' },
+      { label: 'Creation du workspace', status: 'pending' },
       { label: 'Demarrage du container Docker', status: 'pending' },
-      { label: 'Initialisation OpenClaw (generation config)', status: 'pending' },
-      { label: 'Configuration du modele LLM et reseau', status: 'pending' },
-      { label: 'Redemarrage et verification de sante', status: 'pending' },
+      { label: 'Initialisation OpenClaw', status: 'pending' },
+      { label: 'Configuration du modele LLM', status: 'pending' },
+      { label: 'Verification de sante', status: 'pending' },
     ])
-
     try {
       const res = await fetch('/api/openclaw/provision', { method: 'POST' })
-      if (!res.ok) {
-        const data = await res.json()
-        setDeployError(data.error || 'Erreur')
-        updateStep(0, 'error')
-        setProvisioning(false)
-        return
-      }
-      updateStep(0, 'done')
-      updateStep(1, 'active')
-
+      if (!res.ok) { const d = await res.json(); setDeployError(d.error || 'Erreur'); updateStep(0, 'error'); setProvisioning(false); return }
+      updateStep(0, 'done'); updateStep(1, 'active')
       let attempts = 0
       const poll = async () => {
         attempts++
-        const status = await checkStatus()
-        setAgentStatus(status)
-        await fetchLogs()
-
+        const status = await checkStatus(); setAgentStatus(status); await fetchLogs()
         if (status?.provisioned && status?.containerId) {
-          updateStep(1, 'done')
-          updateStep(2, 'done')
-          if (status.hasToken) {
-            updateStep(3, 'done')
-            updateStep(4, 'done')
-            if (status.healthy) {
-              updateStep(5, 'done')
-              setProvisioning(false)
-              return
-            }
+          updateStep(1, 'done'); updateStep(2, 'done')
+          if (status.hasToken) { updateStep(3, 'done'); updateStep(4, 'done')
+            if (status.healthy) { updateStep(5, 'done'); setProvisioning(false); return }
             updateStep(5, 'active')
-          } else {
-            updateStep(3, 'active')
-          }
-        } else if (status?.provisioned) {
-          updateStep(1, 'active')
-        }
-
-        if (status?.status === 'error') {
-          setDeployError(status.lastError || 'Erreur du container')
-          setDeploySteps(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'error' } : s))
-          setProvisioning(false)
-          return
-        }
-
-        if (attempts >= 60) {
-          setDeployError('Timeout apres 3 minutes.')
-          setDeploySteps(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'error' } : s))
-          setProvisioning(false)
-          return
-        }
-
+          } else updateStep(3, 'active')
+        } else if (status?.provisioned) updateStep(1, 'active')
+        if (status?.status === 'error') { setDeployError(status.lastError || 'Erreur'); setDeploySteps(p => p.map(s => s.status === 'active' ? { ...s, status: 'error' } : s)); setProvisioning(false); return }
+        if (attempts >= 60) { setDeployError('Timeout apres 3 minutes.'); setDeploySteps(p => p.map(s => s.status === 'active' ? { ...s, status: 'error' } : s)); setProvisioning(false); return }
         setTimeout(poll, 3000)
       }
       setTimeout(poll, 3000)
-    } catch (e) {
-      setDeployError(e instanceof Error ? e.message : 'Erreur')
-      updateStep(0, 'error')
-      setProvisioning(false)
-    }
+    } catch (e) { setDeployError(e instanceof Error ? e.message : 'Erreur'); updateStep(0, 'error'); setProvisioning(false) }
   }
 
-  // ─── Send message (streaming + tool events) ───────────────────────────
+  // ─── Send message (HTTP streaming) ────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim()
     if (!text || sending) return
 
-    setMessages(prev => [...prev, {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: text,
-      createdAt: new Date().toISOString(),
-    }])
+    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text, createdAt: new Date().toISOString() }])
     setInput('')
     setSending(true)
 
@@ -215,19 +131,12 @@ export function ChatInterface() {
 
       if (!res.ok) {
         const data = await res.json()
-        setMessages(prev => [...prev, {
-          id: assistantId, role: 'assistant',
-          content: `Erreur : ${data.error ?? 'Agent inaccessible.'}`,
-          createdAt: new Date().toISOString(),
-        }])
+        setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: `Erreur : ${data.error ?? 'Agent inaccessible.'}`, createdAt: new Date().toISOString() }])
         return
       }
 
-      // Start with empty assistant bubble
-      setMessages(prev => [...prev, {
-        id: assistantId, role: 'assistant', content: '',
-        createdAt: new Date().toISOString(),
-      }])
+      // Empty bubble, will fill with streaming deltas
+      setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '', createdAt: new Date().toISOString() }])
 
       const reader = res.body?.getReader()
       if (!reader) throw new Error('No stream')
@@ -247,45 +156,16 @@ export function ChatInterface() {
           if (!line.startsWith('data: ')) continue
           const raw = line.slice(6).trim()
           if (raw === '[DONE]') continue
-
           try {
             const event = JSON.parse(raw)
-
             if (event.type === 'delta' && event.content) {
               setMessages(prev => prev.map(m =>
                 m.id === assistantId ? { ...m, content: m.content + event.content } : m
               ))
             }
-
-            if (event.type === 'tool_request') {
-              setToolRequests(prev => {
-                const next = new Map(prev)
-                next.set(event.id, {
-                  id: event.id,
-                  toolType: event.toolType,
-                  command: event.command,
-                  title: event.title,
-                  description: event.description,
-                  status: 'pending',
-                })
-                return next
-              })
-            }
-
-            if (event.type === 'tool_resolved') {
-              setToolRequests(prev => {
-                const next = new Map(prev)
-                const req = next.get(event.id)
-                if (req) next.set(event.id, { ...req, status: 'resolved', decision: event.decision })
-                return next
-              })
-            }
-
             if (event.type === 'error') {
               setMessages(prev => prev.map(m =>
-                m.id === assistantId && !m.content
-                  ? { ...m, content: `Erreur : ${event.error}` }
-                  : m
+                m.id === assistantId && !m.content ? { ...m, content: `Erreur : ${event.error}` } : m
               ))
             }
           } catch { /* skip */ }
@@ -308,10 +188,7 @@ export function ChatInterface() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-  }
-
+  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
   const isReady = agentStatus?.provisioned && agentStatus?.status === 'running' && agentStatus?.healthy
 
   if (loading) return <div className="flex items-center justify-center h-full"><p className="text-sm text-ui-text-tertiary">Chargement...</p></div>
@@ -323,65 +200,31 @@ export function ChatInterface() {
         <div className="max-w-lg w-full">
           <div className="text-center mb-8">
             <div className="w-16 h-16 rounded-2xl bg-brand-violet flex items-center justify-center text-white text-2xl font-bold mx-auto mb-4">M</div>
-            <h2 className="text-lg font-medium text-ui-text-primary mb-2">
-              {provisioning ? 'Deploiement en cours...' : 'Deployer votre Agent MULTI'}
-            </h2>
-            <p className="text-sm text-ui-text-secondary">
-              {provisioning
-                ? 'Un container Docker isole est en cours de creation.'
-                : 'Votre agent personnel sera deploye dans un environnement isole avec acces a votre BUSINESS.md.'}
-            </p>
+            <h2 className="text-lg font-medium text-ui-text-primary mb-2">{provisioning ? 'Deploiement en cours...' : 'Deployer votre Agent MULTI'}</h2>
+            <p className="text-sm text-ui-text-secondary">{provisioning ? 'Un container Docker isole est en cours de creation.' : 'Votre agent personnel sera deploye dans un environnement isole.'}</p>
           </div>
-
-          {deploySteps.length > 0 && (
-            <div className="mb-6 space-y-2">
-              {deploySteps.map((step, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <div className="w-5 h-5 flex items-center justify-center shrink-0">
-                    {step.status === 'done' && <span className="text-brand-green text-sm">✓</span>}
-                    {step.status === 'active' && <span className="w-3 h-3 rounded-full border-2 border-brand-violet border-t-transparent animate-spin" />}
-                    {step.status === 'pending' && <span className="w-2 h-2 rounded-full bg-ui-bg-tertiary" />}
-                    {step.status === 'error' && <span className="text-status-error text-sm">✗</span>}
-                  </div>
-                  <span className={`text-sm ${
-                    step.status === 'active' ? 'text-ui-text-primary font-medium' :
-                    step.status === 'done' ? 'text-brand-green' :
-                    step.status === 'error' ? 'text-status-error' : 'text-ui-text-tertiary'
-                  }`}>{step.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {deployLogs.length > 0 && (
-            <div className="mb-6 rounded-lg bg-gray-900 p-3">
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">Container logs</p>
-              <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                {deployLogs.map((log, i) => <p key={i} className="text-[11px] font-mono text-gray-300 leading-tight truncate">{log}</p>)}
+          {deploySteps.length > 0 && (<div className="mb-6 space-y-2">{deploySteps.map((step, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                {step.status === 'done' && <span className="text-brand-green text-sm">✓</span>}
+                {step.status === 'active' && <span className="w-3 h-3 rounded-full border-2 border-brand-violet border-t-transparent animate-spin" />}
+                {step.status === 'pending' && <span className="w-2 h-2 rounded-full bg-ui-bg-tertiary" />}
+                {step.status === 'error' && <span className="text-status-error text-sm">✗</span>}
               </div>
+              <span className={`text-sm ${step.status === 'active' ? 'text-ui-text-primary font-medium' : step.status === 'done' ? 'text-brand-green' : step.status === 'error' ? 'text-status-error' : 'text-ui-text-tertiary'}`}>{step.label}</span>
             </div>
-          )}
-
-          {deployError && (
-            <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3">
-              <p className="text-xs text-status-error">{deployError}</p>
-            </div>
-          )}
-
-          {!provisioning && (
-            <div className="text-center">
-              <button onClick={handleProvision} className="px-6 py-2.5 rounded-lg bg-brand-violet text-white text-sm font-medium hover:bg-brand-violet-dark transition-colors">
-                {deploySteps.length > 0 ? 'Reessayer' : 'Deployer l\'agent'}
-              </button>
-            </div>
-          )}
+          ))}</div>)}
+          {deployLogs.length > 0 && (<div className="mb-6 rounded-lg bg-gray-900 p-3"><p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">Container logs</p><div className="space-y-0.5 max-h-40 overflow-y-auto">{deployLogs.map((log, i) => <p key={i} className="text-[11px] font-mono text-gray-300 leading-tight truncate">{log}</p>)}</div></div>)}
+          {deployError && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3"><p className="text-xs text-status-error">{deployError}</p></div>}
+          {!provisioning && <div className="text-center"><button onClick={handleProvision} className="px-6 py-2.5 rounded-lg bg-brand-violet text-white text-sm font-medium hover:bg-brand-violet-dark transition-colors">{deploySteps.length > 0 ? 'Reessayer' : 'Deployer l\'agent'}</button></div>}
         </div>
       </div>
     )
   }
 
-  // ─── Chat interface ───────────────────────────────────────────────────
-  const pendingTools = Array.from(toolRequests.values()).filter(t => t.status === 'pending')
+  // ─── Chat ─────────────────────────────────────────────────────────────
+  const hasContent = messages.find(m => m.id === currentAssistantId.current)?.content
+  const showTyping = sending && !hasContent
 
   return (
     <div className="flex flex-col h-full">
@@ -392,63 +235,22 @@ export function ChatInterface() {
           <div>
             <p className="text-sm font-medium text-ui-text-primary">Agent MULTI</p>
             <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" />
-              <span className="text-[10px] text-ui-text-tertiary">En ligne — WebSocket</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${sending ? 'bg-yellow-500 animate-pulse' : 'bg-brand-green animate-pulse'}`} />
+              <span className="text-[10px] text-ui-text-tertiary">
+                {sending ? `Travaille... ${elapsedSeconds}s` : 'En ligne'}
+              </span>
             </div>
           </div>
         </div>
-        {/* Auto-approve toggle */}
-        <button
-          onClick={toggleAutoApprove}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            autoApprove
-              ? 'bg-brand-green-light text-brand-green-dark border border-brand-green'
-              : 'bg-ui-bg-tertiary text-ui-text-secondary border border-ui-border hover:bg-ui-bg'
-          }`}
-        >
-          <span className={`w-2 h-2 rounded-full ${autoApprove ? 'bg-brand-green' : 'bg-ui-text-tertiary'}`} />
-          {autoApprove ? 'Auto-approve ON' : 'Auto-approve OFF'}
-        </button>
+        {sending && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-50 border border-yellow-200">
+            <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+            <span className="text-xs text-yellow-800">
+              Agent en cours d'execution... {elapsedSeconds}s
+            </span>
+          </div>
+        )}
       </div>
-
-      {/* Pending tool approvals banner */}
-      {pendingTools.length > 0 && (
-        <div className="border-b border-yellow-200 bg-yellow-50 px-4 py-2 space-y-2">
-          <p className="text-xs font-medium text-yellow-800">
-            {pendingTools.length} action{pendingTools.length > 1 ? 's' : ''} en attente de validation
-          </p>
-          {pendingTools.map(tool => (
-            <div key={tool.id} className="flex items-center justify-between gap-3 p-2 rounded-md bg-white border border-yellow-200">
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-ui-text-primary truncate">
-                  {tool.toolType === 'exec' ? '$ ' : ''}{tool.command || tool.title || tool.description}
-                </p>
-                <p className="text-[10px] text-ui-text-tertiary">{tool.toolType === 'exec' ? 'Commande shell' : 'Plugin'}</p>
-              </div>
-              <div className="flex gap-1.5 shrink-0">
-                <button
-                  onClick={() => handleApproval(tool.id, 'allow-once')}
-                  className="px-2.5 py-1 text-[10px] font-medium rounded-md bg-brand-green text-white hover:bg-brand-green-dark"
-                >
-                  Approuver
-                </button>
-                <button
-                  onClick={() => handleApproval(tool.id, 'allow-always')}
-                  className="px-2.5 py-1 text-[10px] font-medium rounded-md bg-brand-violet text-white hover:bg-brand-violet-dark"
-                >
-                  Toujours
-                </button>
-                <button
-                  onClick={() => handleApproval(tool.id, 'deny')}
-                  className="px-2.5 py-1 text-[10px] font-medium rounded-md border border-ui-border text-ui-text-secondary hover:bg-ui-bg-tertiary"
-                >
-                  Refuser
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -478,13 +280,19 @@ export function ChatInterface() {
           </div>
         ))}
 
-        {sending && !messages.find(m => m.id === currentAssistantId.current && m.content) && (
+        {showTyping && (
           <div className="flex justify-start">
             <div className="bg-ui-bg-tertiary rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1">
+                  <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <span className="text-[10px] text-ui-text-tertiary ml-1">
+                  {elapsedSeconds > 10 ? 'L\'agent execute des actions...' :
+                   elapsedSeconds > 3 ? 'Reflexion en cours...' : ''}
+                </span>
               </div>
             </div>
           </div>
