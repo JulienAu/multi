@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
 import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
-import { join, extname } from 'path'
+import { join, extname, basename } from 'path'
 import { z } from 'zod'
+import archiver from 'archiver'
+import { Readable } from 'stream'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -45,13 +47,42 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
+    const download = req.nextUrl.searchParams.get('download') === 'true'
+    const zip = req.nextUrl.searchParams.get('zip') === 'true'
+
+    // ZIP download for directories
+    if (zip) {
+      const s = await stat(resolved)
+      if (!s.isDirectory()) {
+        return NextResponse.json({ error: 'Not a directory' }, { status: 400 })
+      }
+
+      const archive = archiver('zip', { zlib: { level: 5 } })
+      archive.directory(resolved, basename(resolved))
+      archive.finalize()
+
+      // Convert Node stream to Web ReadableStream
+      const webStream = Readable.toWeb(archive) as ReadableStream
+      const name = basename(resolved) + '.zip'
+
+      return new Response(webStream, {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="${name}"`,
+        },
+      })
+    }
+
     const content = await readFile(resolved)
     const ext = extname(resolved).toLowerCase()
     const mime = MIME_TYPES[ext] ?? 'application/octet-stream'
 
-    return new Response(content, {
-      headers: { 'Content-Type': mime },
-    })
+    const headers: Record<string, string> = { 'Content-Type': mime }
+    if (download) {
+      headers['Content-Disposition'] = `attachment; filename="${basename(resolved)}"`
+    }
+
+    return new Response(content, { headers })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return NextResponse.json({ error: 'File not found' }, { status: 404 })

@@ -50,6 +50,8 @@ export default function FilesPage() {
   useEffect(() => { fetchFiles() }, [fetchFiles])
 
   const getFileUrl = (path: string) => `/api/openclaw/files?path=${encodeURIComponent(path)}`
+  const getDownloadUrl = (path: string) => `/api/openclaw/files?path=${encodeURIComponent(path)}&download=true`
+  const getZipUrl = (path: string) => `/api/openclaw/files?path=${encodeURIComponent(path)}&zip=true`
   const ext = (name: string) => '.' + name.split('.').pop()?.toLowerCase()
   const isPreviewable = (name: string) => PREVIEWABLE.includes(ext(name))
   const isEditable = (name: string) => EDITABLE.includes(ext(name))
@@ -308,6 +310,14 @@ export default function FilesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <a
+                    href={getZipUrl(currentDir ? `${currentDir}/${dirName}` : dirName)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] font-medium rounded bg-ui-bg-tertiary text-ui-text-secondary hover:bg-ui-bg transition-all"
+                    title="Telecharger en ZIP"
+                  >
+                    ZIP
+                  </a>
                   <button onClick={(e) => { e.stopPropagation(); deleteFile(currentDir ? `${currentDir}/${dirName}` : dirName, dirName, true) }} className="opacity-0 group-hover:opacity-100 text-ui-text-tertiary hover:text-status-error transition-all p-0.5" title="Supprimer">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                   </button>
@@ -338,7 +348,7 @@ export default function FilesPage() {
                       {isHtml(file.name) ? 'Voir le site' : 'Apercu'}
                     </button>
                   )}
-                  <a href={getFileUrl(file.path)} target="_blank" className="px-3 py-1 text-xs font-medium rounded-md border border-ui-border text-ui-text-secondary hover:bg-ui-bg-tertiary transition-colors">Ouvrir</a>
+                  <a href={getDownloadUrl(file.path)} className="px-3 py-1 text-xs font-medium rounded-md border border-ui-border text-ui-text-secondary hover:bg-ui-bg-tertiary transition-colors">Telecharger</a>
                   <button onClick={() => deleteFile(file.path, file.name, false)} className="px-2 py-1 text-xs text-ui-text-tertiary hover:text-status-error transition-colors" title="Supprimer">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                   </button>
