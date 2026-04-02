@@ -133,15 +133,26 @@ export const openclawInstances = pgTable('openclaw_instances', {
   updatedAt:     timestamp('updated_at').defaultNow().notNull(),
 })
 
+// ─── CONVERSATIONS ──────────────────────────────────────────────────────────
+
+export const conversations = pgTable('conversations', {
+  id:         uuid('id').primaryKey().defaultRandom(),
+  userId:     uuid('user_id').references(() => users.id).notNull(),
+  title:      varchar('title', { length: 255 }).notNull(),
+  lastMessageAt: timestamp('last_message_at'),
+  createdAt:  timestamp('created_at').defaultNow().notNull(),
+})
+
 // ─── CHAT MESSAGES ──────────────────────────────────────────────────────────
 
 export const chatMessages = pgTable('chat_messages', {
-  id:         uuid('id').primaryKey().defaultRandom(),
-  userId:     uuid('user_id').references(() => users.id).notNull(),
-  role:       varchar('role', { length: 20 }).notNull(), // 'user' | 'assistant' | 'tool'
-  content:    text('content').notNull(),
-  metadata:   jsonb('metadata').$type<Record<string, unknown>>(),
-  createdAt:  timestamp('created_at').defaultNow().notNull(),
+  id:             uuid('id').primaryKey().defaultRandom(),
+  userId:         uuid('user_id').references(() => users.id).notNull(),
+  conversationId: uuid('conversation_id').references(() => conversations.id).notNull(),
+  role:           varchar('role', { length: 20 }).notNull(),
+  content:        text('content').notNull(),
+  metadata:       jsonb('metadata').$type<Record<string, unknown>>(),
+  createdAt:      timestamp('created_at').defaultNow().notNull(),
 })
 
 // ─── TOOL APPROVALS ─────────────────────────────────────────────────────────
@@ -204,5 +215,6 @@ export type Lead            = typeof leads.$inferSelect
 export type AnalyticsEvent    = typeof analyticsEvents.$inferSelect
 export type ActionValidation  = typeof actionValidations.$inferSelect
 export type OpenclawInstance  = typeof openclawInstances.$inferSelect
+export type Conversation       = typeof conversations.$inferSelect
 export type ChatMessage       = typeof chatMessages.$inferSelect
 export type ToolApproval      = typeof toolApprovals.$inferSelect
