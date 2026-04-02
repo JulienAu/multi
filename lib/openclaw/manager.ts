@@ -438,7 +438,22 @@ export async function provisionOpenClaw(userId: string): Promise<{
           try {
             await dockerExec([
               'exec', containerName, 'sh', '-c',
-              'mkdir -p /home/node/.openclaw/workspace/skills && git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git /home/node/.openclaw/workspace/skills/ui-ux-pro-max-skill 2>&1 || true',
+              [
+                // Clone the repo
+                'mkdir -p /home/node/.openclaw/workspace/skills',
+                'git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git /tmp/uupm 2>&1 || true',
+                // Copy as OpenClaw-compatible skill (SKILL.md at root of skill dir)
+                'mkdir -p /home/node/.openclaw/workspace/skills/ui-ux-pro-max',
+                'cp /tmp/uupm/.claude/skills/ui-ux-pro-max/SKILL.md /home/node/.openclaw/workspace/skills/ui-ux-pro-max/SKILL.md 2>/dev/null || true',
+                // Copy reference files the skill needs
+                'cp -r /tmp/uupm/.claude/skills/design /home/node/.openclaw/workspace/skills/design 2>/dev/null || true',
+                'cp -r /tmp/uupm/.claude/skills/ui-styling /home/node/.openclaw/workspace/skills/ui-styling 2>/dev/null || true',
+                'cp -r /tmp/uupm/.claude/skills/brand /home/node/.openclaw/workspace/skills/brand 2>/dev/null || true',
+                'cp -r /tmp/uupm/.claude/skills/design-system /home/node/.openclaw/workspace/skills/design-system 2>/dev/null || true',
+                // Also keep full repo as reference
+                'cp -r /tmp/uupm /home/node/.openclaw/workspace/skills/ui-ux-pro-max-skill 2>/dev/null || true',
+                'rm -rf /tmp/uupm',
+              ].join(' && '),
             ])
             console.log('[openclaw] skill ui-ux-pro-max-skill installed')
           } catch (e) {
