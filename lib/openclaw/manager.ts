@@ -223,6 +223,9 @@ export async function provisionOpenClaw(userId: string): Promise<{
           config.gateway.http.endpoints = config.gateway.http.endpoints || {}
           config.gateway.http.endpoints.chatCompletions = { enabled: true }
 
+          // Note: tools are auto-approved when using /v1/chat/completions HTTP API
+          // The OpenAI-compatible endpoint handles tool execution internally
+
           await fs.writeFile(`${homeDir}/openclaw.json`, JSON.stringify(config, null, 2), 'utf-8')
 
           // === PHASE 4: Scan for tool-compatible models via CLI ===

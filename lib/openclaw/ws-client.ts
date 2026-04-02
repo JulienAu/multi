@@ -1,3 +1,4 @@
+import 'server-only'
 import WebSocket from 'ws'
 import { EventEmitter } from 'events'
 
@@ -87,10 +88,10 @@ export class OpenClawClient extends EventEmitter {
           minProtocol: 3,
           maxProtocol: 3,
           client: {
-            id: 'multi-dashboard',
+            id: 'cli',
             version: '1.0.0',
             platform: 'linux',
-            mode: 'operator',
+            mode: 'cli',
           },
           role: 'operator',
           scopes: ['operator.read', 'operator.write', 'operator.approvals', 'operator.admin'],

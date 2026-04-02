@@ -1,3 +1,4 @@
+import 'server-only'
 import { OpenClawClient, type OpenClawEvent, type ToolApprovalRequest } from './ws-client'
 import { db, toolApprovals, chatMessages, openclawInstances } from '@/lib/db'
 import { eq } from 'drizzle-orm'

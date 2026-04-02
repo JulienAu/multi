@@ -29,7 +29,8 @@
       "Bash(docker restart:*)",
       "WebFetch(domain:github.com)",
       "Bash(gh repo:*)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")"
     ]
   }
 }

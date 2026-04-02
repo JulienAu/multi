@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
-import { sessionManager } from '@/lib/openclaw/session-manager'
-import { db, chatMessages } from '@/lib/db'
-import { desc } from 'drizzle-orm'
+import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '@/lib/openclaw/manager'
+import { db, chatMessages, openclawInstances } from '@/lib/db'
+import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import type { OpenClawEvent } from '@/lib/openclaw/ws-client'
 
 const sendSchema = z.object({
   message: z.string().min(1).max(10000),
@@ -20,6 +19,14 @@ export async function POST(req: NextRequest) {
 
     const { message } = sendSchema.parse(await req.json())
 
+    const instance = await getOpenClawInstance(userId)
+    if (!instance || instance.status !== 'running') {
+      return NextResponse.json(
+        { error: 'Agent non déployé. Provisionnez votre agent d\'abord.' },
+        { status: 400 },
+      )
+    }
+
     // Save user message
     await db.insert(chatMessages).values({
       userId,
@@ -27,99 +34,60 @@ export async function POST(req: NextRequest) {
       content: message,
     })
 
-    // Get WS session and send message
-    const session = await sessionManager.getSession(userId)
-    const removeListener = { fn: () => {} }
+    // Stream from OpenClaw via HTTP /v1/chat/completions (stream: true)
+    const openclawResponse = await streamFromOpenClaw(instance, message)
+
+    if (!openclawResponse.body) {
+      return NextResponse.json({ error: 'No stream body' }, { status: 500 })
+    }
 
     let fullContent = ''
-    const encoder = new TextEncoder()
+    const reader = openclawResponse.body.getReader()
+    const decoder = new TextDecoder()
 
     const stream = new ReadableStream({
-      start(controller) {
-        // Listen for events from OpenClaw
-        const callback = (event: OpenClawEvent) => {
-          try {
-            switch (event.type) {
-              case 'chat.delta':
-                fullContent += event.data.content
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: 'delta', content: event.data.content })}\n\n`
-                ))
-                break
+      async start(controller) {
+        const encoder = new TextEncoder()
 
-              case 'chat.final':
-                if (event.content) fullContent = event.content
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
-                cleanup()
-                break
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
 
-              case 'chat.error':
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({ type: 'error', error: event.error })}\n\n`
-                ))
-                cleanup()
-                break
+            const chunk = decoder.decode(value, { stream: true })
+            const lines = chunk.split('\n')
 
-              case 'tool.requested':
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: 'tool_request',
-                    id: event.request.id,
-                    toolType: event.request.type,
-                    command: event.request.command,
-                    title: event.request.title,
-                    description: event.request.description || event.request.command,
-                  })}\n\n`
-                ))
-                break
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue
+              const data = line.slice(6).trim()
+              if (data === '[DONE]') continue
 
-              case 'tool.resolved':
-                controller.enqueue(encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: 'tool_resolved',
-                    id: event.id,
-                    decision: event.decision,
-                  })}\n\n`
-                ))
-                break
+              try {
+                const parsed = JSON.parse(data)
+                const delta = parsed.choices?.[0]?.delta?.content
+                if (delta) {
+                  fullContent += delta
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'delta', content: delta })}\n\n`))
+                }
+              } catch { /* skip */ }
             }
-          } catch {
-            // Controller may be closed
           }
-        }
 
-        removeListener.fn = sessionManager.addListener(userId, callback)
-
-        // Send the message via WS
-        sessionManager.sendMessage(userId, message).catch((err) => {
-          controller.enqueue(encoder.encode(
-            `data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`
-          ))
-          cleanup()
-        })
-
-        // Timeout after 3 minutes
-        const timeout = setTimeout(() => {
-          if (fullContent) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
-          }
-          cleanup()
-        }, 180_000)
-
-        function cleanup() {
-          clearTimeout(timeout)
-          removeListener.fn()
-          try { controller.close() } catch { /* already closed */ }
+          fullContent = cleanOpenClawResponse(fullContent)
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
+          controller.close()
 
           // Save assistant response
           if (fullContent) {
-            const cleaned = fullContent.replace(/^\/approve\s+\S+\s+(allow-once|allow-always|deny)\s*/i, '').trim()
-            db.insert(chatMessages).values({
+            await db.insert(chatMessages).values({
               userId,
               role: 'assistant',
-              content: cleaned,
-            }).catch(console.error)
+              content: fullContent,
+            })
           }
+        } catch (e) {
+          console.error('[chat/stream]', e)
+          controller.error(e)
         }
       },
     })
