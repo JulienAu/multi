@@ -124,6 +124,7 @@ export const openclawInstances = pgTable('openclaw_instances', {
   containerId:   varchar('container_id', { length: 100 }),
   containerName: varchar('container_name', { length: 100 }).notNull(),
   port:          integer('port').notNull(),
+  previewPort:   integer('preview_port'),
   gatewayToken:  varchar('gateway_token', { length: 255 }).notNull(),
   status:        openclawStatusEnum('status').default('provisioning').notNull(),
   autoApprove:   boolean('auto_approve').default(false).notNull(),

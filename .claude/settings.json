@@ -38,6 +38,9 @@
       "Bash(ls -la /home/julien/multi/.env*)",
       "Bash(grep -r \"proxy\\\\|serve\\\\|static\\\\|http.*server\" /home/julien/multi/lib/openclaw /home/julien/multi/app/api/openclaw --include=*.ts)",
       "Bash(grep -r \"PORT\\\\|EXPOSE\\\\|listen\" /home/julien/multi/lib/openclaw /home/julien/multi/app/api/openclaw --include=*.ts)"
+    ],
+    "additionalDirectories": [
+      "/home/julien/multi/app/api/openclaw/preview"
     ]
   }
 }

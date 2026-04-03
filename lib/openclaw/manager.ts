@@ -4,6 +4,8 @@ import crypto from 'crypto'
 
 const PORT_RANGE_START = 19000
 const PORT_RANGE_END = 19999
+const PREVIEW_PORT_RANGE_START = 20000
+const PREVIEW_PORT_RANGE_END = 20999
 const DOCKER_NETWORK = 'multi_default'
 const OPENCLAW_IMAGE = 'ghcr.io/openclaw/openclaw:latest'
 
@@ -16,6 +18,17 @@ async function findAvailablePort(): Promise<number> {
     if (!usedSet.has(port)) return port
   }
   throw new Error('No available ports for OpenClaw container')
+}
+
+async function findAvailablePreviewPort(): Promise<number> {
+  const usedPorts = await db.query.openclawInstances.findMany({
+    columns: { previewPort: true },
+  })
+  const usedSet = new Set(usedPorts.map(p => p.previewPort).filter(Boolean))
+  for (let port = PREVIEW_PORT_RANGE_START; port <= PREVIEW_PORT_RANGE_END; port++) {
+    if (!usedSet.has(port)) return port
+  }
+  throw new Error('No available preview ports')
 }
 
 async function buildWorkspaceContext(userId: string): Promise<{
@@ -316,6 +329,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
   }
 
   const port = await findAvailablePort()
+  const previewPort = await findAvailablePreviewPort()
   const containerName = `openclaw-${userId.slice(0, 8)}`
 
   // Create instance record (token will be filled after OpenClaw generates it)
@@ -323,7 +337,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
     userId,
     containerName,
     port,
-    gatewayToken: 'pending', // Will be updated after first boot
+    previewPort,
+    gatewayToken: 'pending',
     status: 'provisioning',
   }).returning()
 
@@ -353,6 +368,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
       '--name', containerName,
       '--network', DOCKER_NETWORK,
       '-p', `${port}:18789`,
+      '-p', `${previewPort}:3000`,
       '-v', `${homeDir}:/home/node/.openclaw`,
       '-e', `OPENROUTER_API_KEY=${process.env.OPENROUTER_API_KEY}`,
       '--restart', 'unless-stopped',

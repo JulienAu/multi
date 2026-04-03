@@ -343,9 +343,14 @@ export default function FilesPage() {
                   {isEditable(file.name) && (
                     <button onClick={() => openEditor(file)} className="px-3 py-1 text-xs font-medium rounded-md bg-brand-violet-light text-brand-violet hover:bg-brand-violet hover:text-white transition-colors">Editer</button>
                   )}
-                  {isPreviewable(file.name) && (
+                  {isHtml(file.name) && (
+                    <a href={`/preview?path=${encodeURIComponent(file.path)}`} className="px-3 py-1 text-xs font-medium rounded-md bg-brand-violet text-white hover:bg-brand-violet-dark transition-colors">
+                      Voir le site
+                    </a>
+                  )}
+                  {isPreviewable(file.name) && !isHtml(file.name) && (
                     <button onClick={() => setPreviewPath(file.path)} className="px-3 py-1 text-xs font-medium rounded-md bg-brand-violet text-white hover:bg-brand-violet-dark transition-colors">
-                      {isHtml(file.name) ? 'Voir le site' : 'Apercu'}
+                      Apercu
                     </button>
                   )}
                   <a href={getDownloadUrl(file.path)} className="px-3 py-1 text-xs font-medium rounded-md border border-ui-border text-ui-text-secondary hover:bg-ui-bg-tertiary transition-colors">Telecharger</a>
