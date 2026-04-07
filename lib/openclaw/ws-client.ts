@@ -278,10 +278,76 @@ export class OpenClawClient extends EventEmitter {
       }
     }
 
-    // Agent lifecycle events — capture tool usage from agent stream
+    // Tool result events — emitted when auto-approved tools complete
+    if (event === 'tool.resolved' || event === 'tool.result' || event === 'exec.result') {
+      const command = (payload.command as string) ?? (payload.tool as string) ?? (payload.name as string) ?? ''
+      if (command) {
+        this.emit('event', {
+          type: 'tool.requested',
+          request: {
+            id: (payload.id as string) ?? '',
+            type: 'exec' as const,
+            command,
+            agentId: 'main',
+            sessionKey: (payload.sessionKey as string) ?? 'main',
+            timeoutMs: 30000,
+          },
+        } as OpenClawEvent)
+      }
+    }
+
+    // Agent lifecycle events — capture tool usage and errors from agent stream
     if (event === 'agent') {
       const data = payload.data as Record<string, unknown> | undefined
       const stream = payload.stream as string
+
+      // Tool invocation from agent stream (Read, Write, Edit, Exec, etc.)
+      if (stream === 'tool_call' || stream === 'tool_input') {
+        const toolName = (data?.name as string) ?? (data?.tool as string) ?? ''
+        const toolArgs = (data?.command as string) ?? (data?.path as string) ?? (data?.text as string)?.slice(0, 80) ?? ''
+        const label = toolArgs ? `${toolName} ${toolArgs}` : toolName
+        if (label) {
+          this.emit('event', {
+            type: 'tool.requested',
+            request: {
+              id: (payload.runId as string) ?? '',
+              type: 'exec' as const,
+              command: label,
+              agentId: 'main',
+              sessionKey: (payload.sessionKey as string) ?? 'main',
+              timeoutMs: 30000,
+            },
+          } as OpenClawEvent)
+        }
+        return
+      }
+
+      // Lifecycle errors (rate limits, upstream failures, etc.)
+      if (stream === 'lifecycle' && data?.phase === 'error') {
+        const error = (data.error as string) ?? 'Agent error'
+        this.emit('event', { type: 'chat.error', error } as OpenClawEvent)
+        return
+      }
+
+      // Lifecycle end — agent finished its turn
+      if (stream === 'lifecycle' && data?.phase === 'end') {
+        this.emit('event', { type: 'chat.final', content: '' } as OpenClawEvent)
+        return
+      }
+
+      // Assistant text stream — the agent's actual response
+      if (stream === 'assistant') {
+        const text = (data?.text as string) ?? ''
+        if (text) {
+          this.emit('event', { type: 'chat.delta', data: { runId: payload.runId as string, content: text } } as OpenClawEvent)
+        }
+        return
+      }
+
+      // Log unhandled agent streams for debugging
+      if (!['lifecycle', 'assistant', 'tool_call', 'tool_input', 'tool_use', 'tool', 'exec'].includes(stream)) {
+        console.log(`[openclaw/ws] unhandled agent stream: ${stream}`, JSON.stringify(data).slice(0, 200))
+      }
 
       // Tool use events
       if (stream === 'tool_use' || stream === 'tool' || stream === 'exec') {

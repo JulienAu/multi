@@ -370,7 +370,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
       '-p', `${port}:18789`,
       '-p', `${previewPort}:3000`,
       '-v', `${homeDir}:/home/node/.openclaw`,
-      '-e', `OPENROUTER_API_KEY=${process.env.OPENROUTER_API_KEY}`,
+      // No OPENROUTER_API_KEY — containers use the LLM proxy instead
       '--restart', 'unless-stopped',
       '--memory', '1g',
       '--cpus', '1',
@@ -397,20 +397,40 @@ export async function provisionOpenClaw(userId: string): Promise<{
           console.log('[openclaw] config found, patching...')
 
           // === PHASE 3: Patch config ===
-          // OpenClaw agent model (needs tool support + fast response)
-          const rawModel = process.env.LLM_MODEL_OPENCLAW || 'google/gemini-3.1-flash-lite-preview'
-          const openclawModel = rawModel.startsWith('openrouter/') ? rawModel : `openrouter/${rawModel}`
+          // Resolve agent model from gateway (plan-aware)
+          const { resolveOpenClawModel } = await import('@/lib/llm/gateway')
+          const openclawModel = await resolveOpenClawModel(userId)
 
           config.agents = config.agents || {}
           config.agents.defaults = config.agents.defaults || {}
           config.agents.defaults.model = config.agents.defaults.model || {}
-          config.agents.defaults.model.primary = openclawModel
+          // Use 'multi' as custom provider name (not 'openrouter' which is reserved)
+          const modelId = openclawModel.replace(/^openrouter\//, '')
+          config.agents.defaults.model.primary = `multi/${modelId}`
 
           // Thinking mode required by some models
           config.agents.defaults.thinkingDefault = 'minimal'
+          config.agents.defaults.timeoutSeconds = 900
+
+          // Configure custom LLM provider pointing to our proxy (no API key in container)
+          const gatewayToken = config.gateway.auth.token
+          const appHost = process.env.OPENCLAW_LLM_PROXY_URL || 'http://multi-app-1:3000'
+          config.models = config.models || {}
+          config.models.providers = config.models.providers || {}
+          config.models.providers.multi = {
+            baseUrl: `${appHost}/api/llm/v1`,
+            apiKey: gatewayToken,
+            models: [{
+              id: modelId,
+              name: modelId,
+              api: 'openai-completions',
+              input: ['text', 'image'],
+              compat: { supportsTools: true },
+            }],
+          }
 
           // Enable OpenAI-compatible HTTP API + bind to all interfaces
-          config.gateway.bind = '0.0.0.0'
+          config.gateway.bind = 'lan'
           config.gateway.http = config.gateway.http || {}
           config.gateway.http.endpoints = config.gateway.http.endpoints || {}
           config.gateway.http.endpoints.chatCompletions = { enabled: true }
@@ -655,6 +675,67 @@ export async function refreshWorkspace(userId: string): Promise<void> {
   if (latestDoc) {
     await fs.writeFile(`${homeDir}/workspace/BUSINESS.md`, latestDoc.content, 'utf-8')
   }
+}
+
+/**
+ * Hot-swap the LLM model on a running OpenClaw container.
+ * Patches openclaw.json, restarts the container, and disconnects the active WS session.
+ */
+export async function hotSwapAgentModel(userId: string, newModel: string): Promise<void> {
+  const instance = await getOpenClawInstance(userId)
+  if (!instance || instance.status !== 'running') {
+    throw new Error('OpenClaw instance not running')
+  }
+
+  const homeDir = getHomeDir(instance.containerName)
+  const fs = await import('fs/promises')
+
+  // 1. Read current config
+  const configPath = `${homeDir}/openclaw.json`
+  const configRaw = await fs.readFile(configPath, 'utf-8')
+  const config = JSON.parse(configRaw)
+
+  // 2. Patch model — use 'multi' provider (not 'openrouter' which is reserved)
+  const modelId = newModel.replace(/^openrouter\//, '')
+  config.agents = config.agents || {}
+  config.agents.defaults = config.agents.defaults || {}
+  config.agents.defaults.model = config.agents.defaults.model || {}
+  config.agents.defaults.model.primary = `multi/${modelId}`
+
+  // Ensure provider points to our proxy
+  const gatewayToken = config.gateway?.auth?.token
+  if (gatewayToken) {
+    const appHost = process.env.OPENCLAW_LLM_PROXY_URL || 'http://multi-app-1:3000'
+    config.models = config.models || {}
+    config.models.providers = config.models.providers || {}
+    // Remove legacy openrouter override if present
+    delete config.models.providers.openrouter
+    config.models.providers.multi = {
+      baseUrl: `${appHost}/api/llm/v1`,
+      apiKey: gatewayToken,
+      models: [{
+        id: modelId,
+        name: modelId,
+        api: 'openai-completions',
+        input: ['text', 'image'],
+        compat: { supportsTools: true },
+      }],
+    }
+  }
+
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8')
+
+  // 3. Fix permissions
+  await dockerExec(['run', '--rm', '-v', `${homeDir}:/fix`, 'alpine', 'chown', '-R', '1000:1000', '/fix'])
+
+  // 4. Disconnect active WS session (will auto-reconnect on next message)
+  const { sessionManager } = await import('./session-manager')
+  sessionManager.disconnect(userId)
+
+  // 5. Restart container
+  await dockerExec(['restart', instance.containerName])
+
+  console.log(`[openclaw] hot-swapped model to multi/${modelId} for user ${userId.slice(0, 8)}`)
 }
 
 export async function checkHealth(userId: string): Promise<boolean> {

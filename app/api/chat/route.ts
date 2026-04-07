@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUserId } from '@/lib/auth'
 import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '@/lib/openclaw/manager'
 import { sessionManager } from '@/lib/openclaw/session-manager'
-import { callLLM, MODELS } from '@/lib/llm/client'
+import { llmGateway } from '@/lib/llm/gateway'
 import { db, chatMessages, conversations } from '@/lib/db'
 import { desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       .set({ lastMessageAt: new Date() })
       .where(eq(conversations.id, conversationId))
     if (conv?.title === 'Nouvelle conversation') {
-      generateConversationTitle(conversationId, message).catch(console.error)
+      generateConversationTitle(conversationId, message, userId).catch(console.error)
     }
 
     const hasImages = images && images.length > 0
@@ -57,90 +57,161 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: e instanceof Error ? e.message : 'Cannot connect to agent' }, { status: 500 })
     }
 
-    let fullContent = ''
     let lastSeenContent = '' // For cumulative delta detection
     let clientClosed = false
+    let agentDone = false
+    let savedToDb = false
     const APPROVE_PATTERN = /\/?[Aa]pprove\s+\S+\s+(allow-once|allow-always|allow|deny)\s*/g
     const encoder = new TextEncoder()
 
+    // Track tool steps and text for clean DB save
+    const toolSteps: string[] = []
+    let currentTextSegment = ''
+
+    function buildDbContent(): string {
+      let content = ''
+      if (toolSteps.length > 0) {
+        content = toolSteps.map(s => `> ⚙ ${s}`).join('\n') + '\n\n'
+      }
+      content += currentTextSegment.replace(APPROVE_PATTERN, '').trim()
+      return content.trim()
+    }
+
+    // Save response to DB (idempotent — only saves once)
+    function saveResponse() {
+      if (savedToDb) return
+      savedToDb = true
+      const cleaned = buildDbContent()
+      if (cleaned) {
+        db.insert(chatMessages).values({
+          userId, conversationId, role: 'assistant', content: cleaned,
+        }).catch(console.error)
+      }
+    }
+
+    // Background listener — keeps running even if client disconnects
+    const removeListener = sessionManager.addListener(userId, (event: OpenClawEvent) => {
+      try {
+        switch (event.type) {
+          case 'chat.delta': {
+            const received = event.data.content
+            // OpenClaw sends cumulative content per turn — extract only the new part
+            let delta: string
+            if (received.length > lastSeenContent.length && received.startsWith(lastSeenContent)) {
+              delta = received.slice(lastSeenContent.length)
+            } else if (received.length < lastSeenContent.length || !received.startsWith(lastSeenContent)) {
+              // Content reset = new agent turn after tool execution
+              // Emit a synthetic tool_use event to collapse the previous text
+              const prevSummary = currentTextSegment.trim().slice(0, 60).replace(/\n/g, ' ')
+              if (prevSummary && currentTextSegment.length > 20) {
+                toolSteps.push(prevSummary + (currentTextSegment.length > 60 ? '...' : ''))
+                currentTextSegment = ''
+                if (!clientClosed) {
+                  try {
+                    streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tool_use', command: toolSteps[toolSteps.length - 1] })}\n\n`))
+                  } catch {}
+                }
+              }
+              delta = received
+            } else {
+              delta = ''
+            }
+            lastSeenContent = received
+            if (!delta) break
+
+            // Filter /approve commands
+            const cleaned = delta.replace(APPROVE_PATTERN, '')
+            if (cleaned) {
+              currentTextSegment += cleaned
+              if (!clientClosed) {
+                try {
+                  streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'delta', content: cleaned })}\n\n`))
+                } catch { clientClosed = true }
+              }
+            }
+            break
+          }
+          case 'chat.final':
+            agentDone = true
+            if (!clientClosed) {
+              try { streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`)) } catch {}
+            }
+            finalize()
+            break
+          case 'chat.error':
+            agentDone = true
+            if (!clientClosed) {
+              try { streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: event.error })}\n\n`)) } catch {}
+            }
+            finalize()
+            break
+          case 'tool.requested': {
+            const cmd = event.request.command || event.request.title || event.request.description || 'tool'
+            toolSteps.push(cmd)
+            currentTextSegment = ''
+            if (!clientClosed) {
+              try {
+                streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'tool_use',
+                  command: cmd,
+                })}\n\n`))
+              } catch { clientClosed = true }
+            }
+          }
+            break
+          case 'disconnected':
+            agentDone = true
+            if (!clientClosed) {
+              try { streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Agent disconnected' })}\n\n`)) } catch {}
+            }
+            finalize()
+            break
+        }
+      } catch { clientClosed = true }
+    })
+
+    // Send message via WebSocket (triggers full agent loop)
+    sessionManager.sendMessage(userId, message).catch((err) => {
+      if (!clientClosed) {
+        try { streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`)) } catch {}
+      }
+      agentDone = true
+      finalize()
+    })
+
+    // Timeout 5 minutes
+    const timeout = setTimeout(() => {
+      if (!agentDone) {
+        agentDone = true
+        if (!clientClosed) {
+          try { streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`)) } catch {}
+        }
+        finalize()
+      }
+    }, 300_000)
+
+    function finalize() {
+      clearTimeout(timeout)
+      removeListener()
+      saveResponse()
+      if (!clientClosed) {
+        try { streamController?.close() } catch {}
+      }
+      clientClosed = true
+    }
+
+    let streamController: ReadableStreamDefaultController | null = null
+
     const stream = new ReadableStream({
       start(controller) {
-        const removeListener = sessionManager.addListener(userId, (event: OpenClawEvent) => {
-          if (clientClosed) return
-          try {
-            switch (event.type) {
-              case 'chat.delta': {
-                const received = event.data.content
-                // Detect cumulative vs incremental
-                let delta: string
-                if (received.length > lastSeenContent.length && received.startsWith(lastSeenContent)) {
-                  delta = received.slice(lastSeenContent.length)
-                  lastSeenContent = received
-                } else {
-                  delta = received
-                  lastSeenContent += received
-                }
-                if (!delta) break
-
-                // Filter /approve commands
-                const cleaned = delta.replace(APPROVE_PATTERN, '')
-                if (cleaned) {
-                  fullContent += cleaned
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'delta', content: cleaned })}\n\n`))
-                }
-                break
-              }
-              case 'chat.final':
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
-                cleanup()
-                break
-              case 'chat.error':
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: event.error })}\n\n`))
-                cleanup()
-                break
-              case 'tool.requested':
-                // Notify client that agent is using a tool
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'tool_use',
-                  command: event.request.command || event.request.title || event.request.description,
-                })}\n\n`))
-                break
-            }
-          } catch { clientClosed = true }
-        })
-
-        // Send message via WebSocket (triggers full agent loop)
-        sessionManager.sendMessage(userId, message).catch((err) => {
-          if (!clientClosed) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`))
-          }
-          cleanup()
-        })
-
-        // Timeout 5 minutes
-        const timeout = setTimeout(() => {
-          if (fullContent) {
-            try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`)) } catch {}
-          }
-          cleanup()
-        }, 300_000)
-
-        function cleanup() {
-          clearTimeout(timeout)
-          removeListener()
-          clientClosed = true
-          try { controller.close() } catch {}
-
-          // Save response
-          const cleaned = fullContent.replace(APPROVE_PATTERN, '').trim()
-          if (cleaned) {
-            db.insert(chatMessages).values({
-              userId, conversationId, role: 'assistant', content: cleaned,
-            }).catch(console.error)
-          }
-        }
+        streamController = controller
       },
-      cancel() { clientClosed = true },
+      cancel() {
+        // Client disconnected — agent keeps running in background
+        clientClosed = true
+        // If agent already finished, save now
+        if (agentDone) saveResponse()
+      },
     })
 
     return new Response(stream, {
@@ -264,10 +335,9 @@ async function handleMultimodalChat(
   })
 }
 
-async function generateConversationTitle(conversationId: string, firstMessage: string) {
+async function generateConversationTitle(conversationId: string, firstMessage: string, userId: string) {
   try {
-    const response = await callLLM({
-      model: MODELS.LIGHT,
+    const response = await llmGateway(userId, 'light', 'auto-title', {
       max_tokens: 30,
       temperature: 0.3,
       messages: [{

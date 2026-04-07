@@ -1,13 +1,11 @@
-import { callLLM, MODELS } from './client'
+import { llmGateway } from './gateway'
 import type { WizardAnswers } from '@/lib/types'
 
 export async function generateBusinessMd(
-  answers: WizardAnswers
+  answers: WizardAnswers,
+  userId: string,
 ): Promise<{ content: string; model: string }> {
-  const model = MODELS.GENERATION
-
-  const response = await callLLM({
-    model,
+  const response = await llmGateway(userId, 'generation', 'business-md', {
     max_tokens: 16384,
     messages: [
       {

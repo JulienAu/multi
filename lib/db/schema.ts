@@ -175,6 +175,35 @@ export const toolApprovals = pgTable('tool_approvals', {
   createdAt:     timestamp('created_at').defaultNow().notNull(),
 })
 
+// ─── LLM MODEL CONFIG ──────────────────────────────────────────────────────
+
+export const llmPurposeEnum = pgEnum('llm_purpose', [
+  'generation', 'light', 'agent', 'fallback',
+])
+
+export const modelConfigs = pgTable('model_configs', {
+  id:              uuid('id').primaryKey().defaultRandom(),
+  plan:            planEnum('plan').notNull(),
+  purpose:         llmPurposeEnum('purpose').notNull(),
+  model:           varchar('model', { length: 255 }).notNull(),
+  maxTokensPerDay: integer('max_tokens_per_day'),
+  isActive:        boolean('is_active').default(true).notNull(),
+  updatedAt:       timestamp('updated_at').defaultNow().notNull(),
+})
+
+// ─── LLM USAGE ─────────────────────────────────────────────────────────────
+
+export const llmUsage = pgTable('llm_usage', {
+  id:               uuid('id').primaryKey().defaultRandom(),
+  userId:           uuid('user_id').references(() => users.id).notNull(),
+  model:            varchar('model', { length: 255 }).notNull(),
+  promptTokens:     integer('prompt_tokens').notNull(),
+  completionTokens: integer('completion_tokens').notNull(),
+  estimatedCostUsd: varchar('estimated_cost_usd', { length: 20 }),
+  endpoint:         varchar('endpoint', { length: 50 }).notNull(),
+  createdAt:        timestamp('created_at').defaultNow().notNull(),
+})
+
 // ─── LEADS ──────────────────────────────────────────────────────────────────
 
 export const leads = pgTable('leads', {
@@ -219,3 +248,5 @@ export type OpenclawInstance  = typeof openclawInstances.$inferSelect
 export type Conversation       = typeof conversations.$inferSelect
 export type ChatMessage       = typeof chatMessages.$inferSelect
 export type ToolApproval      = typeof toolApprovals.$inferSelect
+export type ModelConfig       = typeof modelConfigs.$inferSelect
+export type LlmUsage          = typeof llmUsage.$inferSelect

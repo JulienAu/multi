@@ -30,7 +30,7 @@ async function runRegeneration(docId: string, userId: string) {
 
     // Régénérer via LLM
     const t0 = Date.now()
-    const { content, model } = await generateBusinessMd(answers)
+    const { content, model } = await generateBusinessMd(answers, userId)
     const generationSeconds = Math.round((Date.now() - t0) / 1000)
     const lines = content.split('\n').length
     const sections = (content.match(/^## /gm) || []).length

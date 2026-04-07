@@ -253,6 +253,19 @@ export function ChatInterface() {
 
     const assistantId = `asst-${Date.now()}`
     currentAssistantId.current = assistantId
+    // Track tool steps and text segments for clean display
+    const toolSteps: string[] = []
+    let currentTextSegment = ''
+
+    // Build display content: collapsed tool steps + final text
+    const buildDisplay = () => {
+      let display = ''
+      if (toolSteps.length > 0) {
+        display = toolSteps.map(s => `> ⚙ ${s}`).join('\n') + '\n\n'
+      }
+      display += currentTextSegment
+      return display
+    }
 
     try {
       const res = await fetch('/api/chat', {
@@ -286,15 +299,16 @@ export function ChatInterface() {
           try {
             const ev = JSON.parse(raw)
             if (ev.type === 'delta' && ev.content) {
-              setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: m.content + ev.content } : m))
+              currentTextSegment += ev.content
+              const display = buildDisplay()
+              setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: display } : m))
             }
             if (ev.type === 'tool_use') {
-              // Show tool usage as a subtle inline indicator
-              setMessages(prev => prev.map(m =>
-                m.id === assistantId
-                  ? { ...m, content: m.content + `\n\n> ⚙ *${ev.command}*\n\n` }
-                  : m
-              ))
+              // New tool: collapse current text segment into a tool step
+              toolSteps.push(ev.command)
+              currentTextSegment = ''
+              const display = buildDisplay()
+              setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: display } : m))
             }
           } catch {}
         }
@@ -313,11 +327,24 @@ export function ChatInterface() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
   const isReady = agentStatus?.provisioned && agentStatus?.status === 'running' && agentStatus?.healthy
+  const wasProvisioned = agentStatus?.provisioned && agentStatus?.status !== 'error'
+
+  // Auto-recover: if agent was provisioned but not healthy, poll until it comes back
+  useEffect(() => {
+    if (wasProvisioned && !isReady && !provisioning) {
+      const interval = setInterval(async () => {
+        const st = await checkStatus()
+        setAgentStatus(st)
+        if (st?.healthy) clearInterval(interval)
+      }, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [wasProvisioned, isReady, provisioning, checkStatus])
 
   if (loading) return <div className="flex items-center justify-center h-full"><p className="text-sm text-ui-text-tertiary">Chargement...</p></div>
 
-  // ─── Deploy screen ────────────────────────────────────────────────────
-  if (!isReady) {
+  // ─── Deploy screen (only if never provisioned or in error state) ──────
+  if (!wasProvisioned) {
     return (
       <div className="flex items-center justify-center h-full p-6">
         <div className="max-w-lg w-full">
@@ -412,8 +439,8 @@ export function ChatInterface() {
             <div>
               <p className="text-sm font-medium text-ui-text-primary">Agent MULTI</p>
               <div className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${sending ? 'bg-yellow-500 animate-pulse' : 'bg-brand-green animate-pulse'}`} />
-                <span className="text-[10px] text-ui-text-tertiary">{sending ? `Travaille... ${elapsedSeconds}s` : 'En ligne'}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${!isReady ? 'bg-yellow-500 animate-pulse' : sending ? 'bg-yellow-500 animate-pulse' : 'bg-brand-green animate-pulse'}`} />
+                <span className="text-[10px] text-ui-text-tertiary">{!isReady ? 'Redemarrage...' : sending ? `Travaille... ${elapsedSeconds}s` : 'En ligne'}</span>
               </div>
             </div>
           </div>
@@ -526,7 +553,7 @@ export function ChatInterface() {
               style={{ maxHeight: '120px' }}
               disabled={sending}
             />
-            <button onClick={handleSend} disabled={(!input.trim() && attachments.length === 0) || sending} className="shrink-0 w-10 h-10 rounded-xl bg-brand-violet text-white flex items-center justify-center hover:bg-brand-violet-dark transition-colors disabled:opacity-40">
+            <button onClick={handleSend} disabled={(!input.trim() && attachments.length === 0) || sending || !isReady} className="shrink-0 w-10 h-10 rounded-xl bg-brand-violet text-white flex items-center justify-center hover:bg-brand-violet-dark transition-colors disabled:opacity-40">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
             </button>
           </div>

@@ -17,8 +17,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Session not found or incomplete' }, { status: 404 })
     }
 
+    // Persister si l'utilisateur est connecté
+    const userId = await getCurrentUserId()
+
     const t0 = Date.now()
-    const { content, model } = await generateBusinessMd(session.answers)
+    const { content, model } = await generateBusinessMd(session.answers, userId ?? 'anonymous')
     const generationSeconds = Math.round((Date.now() - t0) / 1000)
     const lines    = content.split('\n').length
     const sections = (content.match(/^## /gm) || []).length
@@ -26,9 +29,6 @@ export async function POST(req: NextRequest) {
     await db.update(wizardSessions)
       .set({ completedAt: new Date(), updatedAt: new Date() })
       .where(eq(wizardSessions.id, sessionId))
-
-    // Persister si l'utilisateur est connecté
-    const userId = await getCurrentUserId()
     if (userId) {
       await db.insert(businessDocs).values({
         userId,

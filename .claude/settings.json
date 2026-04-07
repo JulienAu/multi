@@ -37,10 +37,44 @@
       "Bash(grep -r \"canvas\\\\|18789\" /home/julien/multi --include=*.ts --include=*.js --include=*.json --include=*.md)",
       "Bash(ls -la /home/julien/multi/.env*)",
       "Bash(grep -r \"proxy\\\\|serve\\\\|static\\\\|http.*server\" /home/julien/multi/lib/openclaw /home/julien/multi/app/api/openclaw --include=*.ts)",
-      "Bash(grep -r \"PORT\\\\|EXPOSE\\\\|listen\" /home/julien/multi/lib/openclaw /home/julien/multi/app/api/openclaw --include=*.ts)"
+      "Bash(grep -r \"PORT\\\\|EXPOSE\\\\|listen\" /home/julien/multi/lib/openclaw /home/julien/multi/app/api/openclaw --include=*.ts)",
+      "Bash(npx drizzle-kit:*)",
+      "Bash(node_modules/.bin/drizzle-kit generate:*)",
+      "Read(//home/julien/.nvm/versions/node/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//home/julien/**)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/npx drizzle-kit:*)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node /home/julien/multi/node_modules/.bin/drizzle-kit generate)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node /home/julien/multi/node_modules/.bin/tsc --noEmit)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node /home/julien/multi/node_modules/.bin/drizzle-kit push)",
+      "Read(//tmp/openclaw-homes/**)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\);console.log\\('Model:', c.agents?.defaults?.model?.primary\\)}\\)\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\); console.log\\(JSON.stringify\\(c.providers || c.llm || c.openai || c.api || {}, null, 2\\)\\); console.log\\('---'\\); console.log\\('Model config:', JSON.stringify\\(c.agents?.defaults?.model, null, 2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\); console.log\\(JSON.stringify\\(c, null, 2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const s=JSON.parse\\(d\\); const p=s.properties||s; const keys=Object.keys\\(p\\); console.log\\('Top-level keys:', keys.join\\(', '\\)\\); if\\(p.providers\\) console.log\\('providers:', JSON.stringify\\(p.providers, null, 2\\).slice\\(0, 2000\\)\\); if\\(p.secrets\\) console.log\\('secrets:', JSON.stringify\\(p.secrets, null, 2\\).slice\\(0, 1000\\)\\); if\\(p.agents?.properties?.defaults?.properties?.model\\) console.log\\('model:', JSON.stringify\\(p.agents.properties.defaults.properties.model, null, 2\\).slice\\(0, 1000\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const s=JSON.parse\\(d\\); const m=s.properties?.models; if\\(m\\) console.log\\(JSON.stringify\\(m, null, 2\\).slice\\(0, 3000\\)\\); else console.log\\('no models key'\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\);console.log\\('Current model:', c.agents?.defaults?.model?.primary\\);console.log\\('Provider:', JSON.stringify\\(c.models?.providers?.openrouter || 'none'\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\);console.log\\('Model:', c.agents?.defaults?.model?.primary\\);console.log\\('Provider openrouter:', JSON.stringify\\(c.models?.providers?.openrouter, null, 2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\);console.log\\('Model:', c.agents?.defaults?.model?.primary\\);console.log\\('Provider:', JSON.stringify\\(c.models?.providers?.openrouter, null, 2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\);c.gateway.bind='lan';process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\)}\\)\")",
+      "Bash(mv /tmp/openclaw-fix.json /tmp/openclaw-homes/openclaw-aaaaaaaa/openclaw.json)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const c=JSON.parse\\(d\\);c.models.providers.openrouter.models=[];process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); // Fix models array c.models.providers.openrouter.models=[]; // Fix model name c.agents.defaults.model.primary='openrouter/qwen/qwen3-235b-a22b:free'; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); c.models.providers.openrouter.models=[]; c.agents.defaults.model.primary='openrouter/qwen/qwen3.6-plus:free'; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const s=JSON.parse\\(d\\);const prov=s.properties?.models?.properties?.providers?.additionalProperties;console.log\\(JSON.stringify\\(prov,null,2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const s=JSON.parse\\(d\\);const prov=s.properties?.models?.properties?.providers?.additionalProperties?.properties;console.log\\(Object.keys\\(prov\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const s=JSON.parse\\(d\\);const m=s.properties?.models?.properties?.providers?.additionalProperties?.properties?.models;console.log\\(JSON.stringify\\(m,null,2\\)\\)}\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); const modelId = 'qwen/qwen3.6-plus:free'; c.models.providers.openrouter.models=[{ id: modelId, name: modelId, api: 'openai-completions', input: ['text', 'image'], compat: { supportsTools: true, thinkingFormat: 'qwen' } }]; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); const modelId = 'qwen/qwen3.6-plus:free'; c.models.providers.openrouter.models=[{id: modelId, name: modelId, api: 'openai-completions', input: ['text','image'], compat: {supportsTools: true}}]; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
+      "Bash(docker start:*)",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); // Remove the conflicting openrouter provider override if \\(c.models?.providers?.openrouter\\) delete c.models.providers.openrouter; // Add custom provider 'multi' c.models = c.models || {}; c.models.providers = c.models.providers || {}; c.models.providers.multi = { baseUrl: 'http://multi-app-1:3000/api/llm/v1', apiKey: c.gateway.auth.token, models: [{ id: 'qwen/qwen3.6-plus:free', name: 'qwen/qwen3.6-plus:free', api: 'openai-completions', input: ['text','image'], compat: { supportsTools: true } }] }; // Point agent model to our custom provider c.agents.defaults.model.primary = 'multi/qwen/qwen3.6-plus:free'; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
+      "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); c.agents.defaults.timeoutSeconds=900; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
+      "Bash(pandoc /home/julien/multi/MULTI_Roadmap_Lots.docx -t markdown -o /home/julien/multi/MULTI_Roadmap_Lots.md)"
     ],
     "additionalDirectories": [
-      "/home/julien/multi/app/api/openclaw/preview"
+      "/home/julien/multi/app/api/openclaw/preview",
+      "/tmp"
     ]
   }
 }

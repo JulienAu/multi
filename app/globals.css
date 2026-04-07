@@ -79,6 +79,10 @@
   100% { transform: translateX(-100%); opacity: 0; }
 }
 
+html {
+  color-scheme: light only;
+}
+
 body {
   background: var(--color-ui-bg);
   color: var(--color-ui-text-primary);
