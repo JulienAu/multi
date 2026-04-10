@@ -411,6 +411,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
           // Thinking mode required by some models
           config.agents.defaults.thinkingDefault = 'minimal'
           config.agents.defaults.timeoutSeconds = 900
+          config.agents.defaults.llm = config.agents.defaults.llm || {}
+          config.agents.defaults.llm.idleTimeoutSeconds = 300
 
           // Configure custom LLM provider pointing to our proxy (no API key in container)
           const gatewayToken = config.gateway.auth.token
@@ -428,6 +430,13 @@ export async function provisionOpenClaw(userId: string): Promise<{
               compat: { supportsTools: true },
             }],
           }
+
+          // Enable cron scheduler with webhook callback
+          const webhookSecret = process.env.OPENCLAW_WEBHOOK_SECRET || 'multi-cron-webhook-secret'
+          config.cron = config.cron || {}
+          config.cron.enabled = true
+          config.cron.webhook = `${appHost}/api/agents/webhook`
+          config.cron.webhookToken = webhookSecret
 
           // Enable OpenAI-compatible HTTP API + bind to all interfaces
           config.gateway.bind = 'lan'
@@ -639,7 +648,7 @@ async function fetchOpenClaw(
           thinking: { type: 'enabled', budget_tokens: 2048 },
           stream,
         }),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(900_000),
       })
       return response
     } catch (e) {

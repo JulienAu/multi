@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     await db.update(wizardSessions)
       .set({ completedAt: new Date(), updatedAt: new Date() })
       .where(eq(wizardSessions.id, sessionId))
+    // Sauvegarder le business doc si connecté, sinon stocker dans la session
     if (userId) {
       await db.insert(businessDocs).values({
         userId,
@@ -41,6 +42,14 @@ export async function POST(req: NextRequest) {
         generatedByModel: model,
         generationSeconds,
       })
+    } else {
+      // Stocker le contenu généré dans la session pour le récupérer plus tard
+      await db.update(wizardSessions)
+        .set({
+          answers: { ...session.answers, _generatedContent: content, _generatedModel: model },
+          updatedAt: new Date(),
+        })
+        .where(eq(wizardSessions.id, sessionId))
     }
 
     return NextResponse.json({ businessMd: content, lines, sections, generationSeconds, model })

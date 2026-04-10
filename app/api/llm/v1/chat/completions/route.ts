@@ -54,11 +54,38 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // 3. Stream: pipe through directly
+  // 3. Stream: pipe through, intercept usage from final chunks
   if (isStream) {
-    // Log usage at the end is not possible with streaming without parsing SSE,
-    // so we skip detailed token logging for streamed agent calls for now.
-    return new Response(openrouterResponse.body, {
+    const reader = openrouterResponse.body!.getReader()
+    const decoder = new TextDecoder()
+    let usageData: { prompt_tokens: number; completion_tokens: number } | null = null
+
+    const stream = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read()
+        if (done) {
+          controller.close()
+          // Log usage after stream ends
+          if (usageData) {
+            logUsage(instance.userId, body.model || 'unknown', 'agent', usageData).catch(console.error)
+          }
+          return
+        }
+        // Pass through to client
+        controller.enqueue(value)
+        // Parse chunks to extract usage
+        const text = decoder.decode(value, { stream: true })
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
+          try {
+            const parsed = JSON.parse(line.slice(6))
+            if (parsed.usage) usageData = parsed.usage
+          } catch {}
+        }
+      },
+    })
+
+    return new Response(stream, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',

@@ -99,16 +99,37 @@ async function claimExistingData(userId: string, email: string) {
 
     const sessionIds = sessionsWithEmail.map(s => s.id)
 
-    // Rattacher les sessions au user
-    for (const sessionId of sessionIds) {
+    // Rattacher les sessions au user et créer les business docs manquants
+    for (const session of sessionsWithEmail) {
       await db.update(wizardSessions)
         .set({ userId, updatedAt: new Date() })
-        .where(eq(wizardSessions.id, sessionId))
+        .where(eq(wizardSessions.id, session.id))
 
-      // Rattacher les business docs liés à ces sessions
+      // Rattacher les business docs existants
       await db.update(businessDocs)
         .set({ userId, updatedAt: new Date() })
-        .where(eq(businessDocs.sessionId, sessionId))
+        .where(eq(businessDocs.sessionId, session.id))
+
+      // Si le business doc n'existe pas mais le contenu est dans la session, le créer
+      const existingDoc = await db.query.businessDocs.findFirst({
+        where: (d, { eq }) => eq(d.sessionId, session.id),
+      })
+      if (!existingDoc && session.answers) {
+        const answers = session.answers as Record<string, unknown>
+        const content = answers._generatedContent as string | undefined
+        if (content) {
+          await db.insert(businessDocs).values({
+            userId,
+            sessionId: session.id,
+            content,
+            lineCount: content.split('\n').length,
+            sectionCount: (content.match(/^## /gm) || []).length,
+            sector: answers.sector as string,
+            businessName: answers.name as string,
+            generatedByModel: (answers._generatedModel as string) ?? 'unknown',
+          })
+        }
+      }
     }
 
     // Rattacher les leads

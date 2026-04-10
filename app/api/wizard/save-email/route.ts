@@ -27,18 +27,21 @@ export async function POST(req: NextRequest) {
       .set({ email, emailCapturedAt: new Date() })
       .where(eq(wizardSessions.id, sessionId))
 
-    // Récupérer le BUSINESS.md lié à cette session
+    // Récupérer le BUSINESS.md — soit en DB, soit stocké dans la session
     const doc = await db.query.businessDocs.findFirst({
       where: (d, { eq }) => eq(d.sessionId, sessionId),
       orderBy: [desc(businessDocs.createdAt)],
     })
 
+    const content = doc?.content
+      ?? (session?.answers as Record<string, unknown>)?._generatedContent as string | undefined
+
     // Envoyer l'email
-    if (doc) {
+    if (content) {
       await sendEmail({
         to: email,
         subject: `Votre BUSINESS.md — ${businessName}`,
-        html: buildBusinessMdEmail(doc.content, businessName),
+        html: buildBusinessMdEmail(content, businessName),
       })
     }
 

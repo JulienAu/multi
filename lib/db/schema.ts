@@ -175,6 +175,46 @@ export const toolApprovals = pgTable('tool_approvals', {
   createdAt:     timestamp('created_at').defaultNow().notNull(),
 })
 
+// ─── AGENT JOBS ────────────────────────────────────────────────────────────
+
+export const agentJobStatusEnum = pgEnum('agent_job_status', [
+  'active', 'paused', 'archived',
+])
+
+export const agentJobs = pgTable('agent_jobs', {
+  id:               uuid('id').primaryKey().defaultRandom(),
+  userId:           uuid('user_id').references(() => users.id).notNull(),
+  openclawCronId:   varchar('openclaw_cron_id', { length: 100 }),
+  name:             varchar('name', { length: 255 }).notNull(),
+  icon:             varchar('icon', { length: 10 }).default('🤖').notNull(),
+  description:      text('description').notNull(),
+  schedule:         varchar('schedule', { length: 100 }).notNull(),
+  scheduleHuman:    varchar('schedule_human', { length: 255 }),
+  timezone:         varchar('timezone', { length: 50 }).default('Europe/Paris').notNull(),
+  requiresApproval: boolean('requires_approval').default(true).notNull(),
+  status:           agentJobStatusEnum('status').default('active').notNull(),
+  templateId:       varchar('template_id', { length: 50 }),
+  lastRunAt:        timestamp('last_run_at'),
+  nextRunAt:        timestamp('next_run_at'),
+  createdAt:        timestamp('created_at').defaultNow().notNull(),
+  updatedAt:        timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const agentRunStatusEnum = pgEnum('agent_run_status', [
+  'running', 'completed', 'failed', 'pending_approval', 'approved', 'rejected',
+])
+
+export const agentJobRuns = pgTable('agent_job_runs', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  jobId:       uuid('job_id').references(() => agentJobs.id).notNull(),
+  userId:      uuid('user_id').references(() => users.id).notNull(),
+  status:      agentRunStatusEnum('status').default('running').notNull(),
+  output:      text('output'),
+  startedAt:   timestamp('started_at').defaultNow().notNull(),
+  completedAt: timestamp('completed_at'),
+  createdAt:   timestamp('created_at').defaultNow().notNull(),
+})
+
 // ─── LLM MODEL CONFIG ──────────────────────────────────────────────────────
 
 export const llmPurposeEnum = pgEnum('llm_purpose', [
@@ -250,3 +290,5 @@ export type ChatMessage       = typeof chatMessages.$inferSelect
 export type ToolApproval      = typeof toolApprovals.$inferSelect
 export type ModelConfig       = typeof modelConfigs.$inferSelect
 export type LlmUsage          = typeof llmUsage.$inferSelect
+export type AgentJob          = typeof agentJobs.$inferSelect
+export type AgentJobRun       = typeof agentJobRuns.$inferSelect
