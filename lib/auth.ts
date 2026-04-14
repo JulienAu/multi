@@ -11,6 +11,20 @@ const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET)
 const COOKIE_NAME = 'multi_session'
 const BUSINESS_COOKIE = 'multi_business_id'
 
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AuthError'
+  }
+}
+
+const COOKIE_BASE = {
+  httpOnly: true,
+  sameSite: 'lax' as const,
+  path: '/',
+  secure: process.env.NODE_ENV === 'production',
+}
+
 // ─── JWT ────────────────────────────────────────────────────────────────────
 
 async function createToken(userId: string): Promise<string> {
@@ -35,9 +49,7 @@ export async function setSession(userId: string) {
   const token = await createToken(userId)
   const cookieStore = await cookies()
   cookieStore.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
+    ...COOKIE_BASE,
     maxAge: 60 * 60 * 24 * 30, // 30 jours
   })
 }
@@ -109,9 +121,7 @@ export async function setCurrentBusinessId(businessId: string): Promise<boolean>
 
   const cookieStore = await cookies()
   cookieStore.set(BUSINESS_COOKIE, businessId, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
+    ...COOKIE_BASE,
     maxAge: 60 * 60 * 24 * 30,
   })
   return true
@@ -129,7 +139,11 @@ export async function signUp(email: string, password: string, firstName?: string
     where: (u, { eq }) => eq(u.email, email),
   })
   if (existing) {
-    throw new Error('Un compte existe déjà avec cet email')
+    // Message générique anti-enumeration — ne pas révéler si l'email existe.
+    // TODO : quand le flow email-verification sera en place, envoyer un mail
+    // "tentative de réinscription" au propriétaire et retourner le même message
+    // que pour une vraie inscription réussie.
+    throw new AuthError('Inscription impossible. Essaie de te connecter ou contacte le support.')
   }
 
   const passwordHash = await bcrypt.hash(password, 10)
@@ -145,7 +159,8 @@ export async function signUp(email: string, password: string, firstName?: string
   if (businessId) {
     const cookieStore = await cookies()
     cookieStore.set(BUSINESS_COOKIE, businessId, {
-      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+      ...COOKIE_BASE,
+      maxAge: 60 * 60 * 24 * 30,
     })
   }
   return user
@@ -215,17 +230,20 @@ async function claimExistingData(userId: string, email: string): Promise<string 
   return lastBusinessId
 }
 
+// Hash dummy utilisé quand l'email n'existe pas, pour que le temps de réponse
+// soit identique (timing attack anti-enumeration). Généré une seule fois.
+const DUMMY_HASH = '$2b$10$zFvDnKkLN7E2kFLbCQJeqOiPrPn9vS7dvJ3jZQW0K/fRWh5ixHwzG'
+
 export async function signIn(email: string, password: string) {
   const user = await db.query.users.findFirst({
     where: (u, { eq }) => eq(u.email, email),
   })
-  if (!user) {
-    throw new Error('Email ou mot de passe incorrect')
-  }
 
-  const valid = await bcrypt.compare(password, user.passwordHash)
-  if (!valid) {
-    throw new Error('Email ou mot de passe incorrect')
+  // Run bcrypt même si user inexistant pour normaliser le timing.
+  const valid = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH)
+
+  if (!user || !valid) {
+    throw new AuthError('Email ou mot de passe incorrect')
   }
 
   await setSession(user.id)
@@ -238,7 +256,8 @@ export async function signIn(email: string, password: string) {
   if (firstBusiness) {
     const cookieStore = await cookies()
     cookieStore.set(BUSINESS_COOKIE, firstBusiness.id, {
-      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+      ...COOKIE_BASE,
+      maxAge: 60 * 60 * 24 * 30,
     })
   }
 

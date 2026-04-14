@@ -13,6 +13,34 @@ export interface WorkspaceSpec {
   memory?: string          // ex: "1g"
   cpus?: string            // ex: "1"
   restartPolicy?: 'no' | 'always' | 'unless-stopped'
+  /** Durcissement sécurité (appliqué par Docker ou k3s selon backend). */
+  hardening?: WorkspaceHardening
+}
+
+export interface WorkspaceHardening {
+  /** Drop toutes les capabilities Linux (recommandé : true). */
+  dropAllCapabilities?: boolean
+  /** Bloque tout gain de privilèges (setuid, etc.). */
+  noNewPrivileges?: boolean
+  /** Limite le nombre de process (anti fork-bomb). */
+  pidsLimit?: number
+  /** Force non-root (uid:gid). */
+  runAsUser?: string        // ex: "1000:1000"
+  /** Read-only rootfs (prévoir des tmpfs pour /tmp si besoin). */
+  readOnlyRootfs?: boolean
+}
+
+/**
+ * Preset hardening recommandé pour les containers user MULTI.
+ * L'agent a encore besoin d'écrire dans son volume bind-mounté (/home/node/.openclaw),
+ * donc on ne met pas `readOnlyRootfs: true` tant que le volume est explicite.
+ */
+export const DEFAULT_HARDENING: WorkspaceHardening = {
+  dropAllCapabilities: true,
+  noNewPrivileges: true,
+  pidsLimit: 512,
+  runAsUser: '1000:1000',
+  readOnlyRootfs: false,
 }
 
 export interface Orchestrator {

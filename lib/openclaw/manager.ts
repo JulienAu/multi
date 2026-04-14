@@ -323,6 +323,7 @@ export async function provisionOpenClaw(businessId: string): Promise<{
   const port = await findAvailablePort()
   const previewPort = await findAvailablePreviewPort()
   const containerName = `openclaw-${businessId.slice(0, 8)}`
+  const webhookSecret = crypto.randomBytes(32).toString('hex')
 
   const [instance] = await db.insert(openclawInstances).values({
     businessId,
@@ -330,6 +331,7 @@ export async function provisionOpenClaw(businessId: string): Promise<{
     port,
     previewPort,
     gatewayToken: 'pending',
+    webhookSecret,
     status: 'provisioning',
   }).returning()
 
@@ -365,6 +367,12 @@ export async function provisionOpenClaw(businessId: string): Promise<{
       restartPolicy: 'unless-stopped',
       memory: '1g',
       cpus: '1',
+      hardening: {
+        // Subset conservateur validé avec l'image OpenClaw actuelle.
+        // `dropAllCapabilities` + `readOnlyRootfs` à activer après validation sur une VM test.
+        noNewPrivileges: true,
+        pidsLimit: 512,
+      },
     })
 
     await db.update(openclawInstances)
@@ -420,9 +428,8 @@ export async function provisionOpenClaw(businessId: string): Promise<{
             }],
           }
 
-          // Enable cron scheduler with webhook callback
-          const webhookSecret = process.env.OPENCLAW_WEBHOOK_SECRET
-          if (!webhookSecret) throw new Error('OPENCLAW_WEBHOOK_SECRET is required')
+          // Enable cron scheduler with webhook callback — token UNIQUE par instance
+          // (cf. openclaw_instances.webhook_secret).
           config.cron = config.cron || {}
           config.cron.enabled = true
           config.cron.webhook = `${appHost}/api/agents/webhook`

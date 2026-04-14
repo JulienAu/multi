@@ -22,6 +22,20 @@
       "when": 1776000000000,
       "tag": "0002_b2b_light",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776100000000,
+      "tag": "0003_webhook_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776200000000,
+      "tag": "0004_webhook_secret_per_instance",
+      "breakpoints": true
     }
   ]
 }

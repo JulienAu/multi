@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { readFile, stat } from 'fs/promises'
+import { readFile, stat, realpath } from 'fs/promises'
 import { join, extname } from 'path'
+
+async function safeResolve(workspaceDir: string, relativePath: string): Promise<string | null> {
+  try {
+    const resolved = await realpath(join(workspaceDir, relativePath))
+    const workspaceReal = await realpath(workspaceDir)
+    if (!resolved.startsWith(workspaceReal + '/') && resolved !== workspaceReal) return null
+    return resolved
+  } catch {
+    return null
+  }
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -49,9 +60,8 @@ export async function GET(
     const filePath = pathSegments.join('/')
     const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
 
-    // Prevent path traversal
-    const resolved = join(workspaceDir, filePath)
-    if (!resolved.startsWith(workspaceDir)) {
+    const resolved = await safeResolve(workspaceDir, filePath)
+    if (!resolved) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
@@ -60,7 +70,8 @@ export async function GET(
     try {
       const s = await stat(resolved)
       if (s.isDirectory()) {
-        targetPath = join(resolved, 'index.html')
+        const indexResolved = await safeResolve(workspaceDir, join(filePath, 'index.html'))
+        if (indexResolved) targetPath = indexResolved
       }
     } catch {
       // File might not exist, will error below

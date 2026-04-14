@@ -25,6 +25,15 @@ export const dockerOrchestrator: Orchestrator = {
     if (spec.memory) args.push('--memory', spec.memory)
     if (spec.cpus) args.push('--cpus', spec.cpus)
     if (spec.restartPolicy) args.push('--restart', spec.restartPolicy)
+
+    // Hardening
+    const h = spec.hardening
+    if (h?.dropAllCapabilities) args.push('--cap-drop', 'ALL')
+    if (h?.noNewPrivileges) args.push('--security-opt', 'no-new-privileges:true')
+    if (h?.pidsLimit) args.push('--pids-limit', String(h.pidsLimit))
+    if (h?.runAsUser) args.push('--user', h.runAsUser)
+    if (h?.readOnlyRootfs) args.push('--read-only')
+
     args.push(spec.image)
     const id = await dockerExec(args)
     return { id: id.slice(0, 12) }

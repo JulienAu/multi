@@ -1,6 +1,6 @@
 import {
   pgTable, text, timestamp, boolean, integer,
-  jsonb, uuid, varchar, pgEnum,
+  jsonb, uuid, varchar, pgEnum, uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 // ─── ENUMS ──────────────────────────────────────────────────────────────────
@@ -146,6 +146,9 @@ export const openclawInstances = pgTable('openclaw_instances', {
   port:          integer('port').notNull(),
   previewPort:   integer('preview_port'),
   gatewayToken:  varchar('gateway_token', { length: 255 }).notNull(),
+  /** Secret de webhook unique par instance (token aléatoire, indexé pour lookup webhook).
+   *  Remplace l'ancien `OPENCLAW_WEBHOOK_SECRET` partagé entre tous les containers. */
+  webhookSecret: varchar('webhook_secret', { length: 255 }).notNull().unique(),
   status:        openclawStatusEnum('status').default('provisioning').notNull(),
   autoApprove:   boolean('auto_approve').default(false).notNull(),
   lastError:     text('last_error'),
@@ -278,6 +281,19 @@ export const leads = pgTable('leads', {
   convertedAt:           timestamp('converted_at'),
   createdAt:             timestamp('created_at').defaultNow().notNull(),
 })
+
+// ─── WEBHOOK EVENTS (idempotency) ───────────────────────────────────────────
+// Permet de dédupliquer les webhooks rejoués (Stripe, OpenClaw, etc.).
+// Clé unique = (provider, externalId).
+
+export const webhookEvents = pgTable('webhook_events', {
+  id:         uuid('id').primaryKey().defaultRandom(),
+  provider:   varchar('provider', { length: 50 }).notNull(),  // 'stripe' | 'openclaw'
+  externalId: varchar('external_id', { length: 255 }).notNull(),
+  receivedAt: timestamp('received_at').defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('webhook_events_provider_external_idx').on(t.provider, t.externalId),
+])
 
 // ─── ANALYTICS EVENTS ───────────────────────────────────────────────────────
 

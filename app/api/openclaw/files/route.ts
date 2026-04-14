@@ -1,8 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
+import { readFile, writeFile, readdir, stat, rm, realpath } from 'fs/promises'
 import { join, extname, basename } from 'path'
+
+/**
+ * Résout un chemin relatif au workspace en le normalisant contre les symlinks.
+ * Protège contre un agent malveillant qui créerait `workspace/escape -> /etc/passwd`.
+ */
+async function safeResolve(workspaceDir: string, relativePath: string): Promise<string | null> {
+  const raw = join(workspaceDir, relativePath)
+  try {
+    // realpath résout les symlinks sur le path existant.
+    const resolved = await realpath(raw)
+    const workspaceReal = await realpath(workspaceDir)
+    if (!resolved.startsWith(workspaceReal + '/') && resolved !== workspaceReal) return null
+    return resolved
+  } catch {
+    // Fichier n'existe pas encore (cas du PUT d'un nouveau fichier) :
+    // on vérifie juste que le parent est dans le workspace.
+    try {
+      const parent = await realpath(join(raw, '..'))
+      const workspaceReal = await realpath(workspaceDir)
+      if (!parent.startsWith(workspaceReal + '/') && parent !== workspaceReal) return null
+      return raw
+    } catch {
+      return null
+    }
+  }
+}
 import { z } from 'zod'
 import archiver from 'archiver'
 import { Readable } from 'stream'
@@ -41,9 +67,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ files })
     }
 
-    // Prevent path traversal
-    const resolved = join(workspaceDir, filePath)
-    if (!resolved.startsWith(workspaceDir)) {
+    const resolved = await safeResolve(workspaceDir, filePath)
+    if (!resolved) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
@@ -112,8 +137,8 @@ export async function PUT(req: NextRequest) {
     const { path: filePath, content } = putSchema.parse(await req.json())
     const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
 
-    const resolved = join(workspaceDir, filePath)
-    if (!resolved.startsWith(workspaceDir)) {
+    const resolved = await safeResolve(workspaceDir, filePath)
+    if (!resolved) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
@@ -145,8 +170,8 @@ export async function DELETE(req: NextRequest) {
     const { path: filePath } = deleteSchema.parse(await req.json())
     const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
 
-    const resolved = join(workspaceDir, filePath)
-    if (!resolved.startsWith(workspaceDir)) {
+    const resolved = await safeResolve(workspaceDir, filePath)
+    if (!resolved) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 

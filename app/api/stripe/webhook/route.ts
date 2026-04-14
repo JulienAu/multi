@@ -3,6 +3,7 @@ import Stripe from 'stripe'
 import { stripe } from '@/lib/stripe/client'
 import { db, businesses, users } from '@/lib/db'
 import { eq, desc } from 'drizzle-orm'
+import { recordWebhookEvent } from '@/lib/webhook-idempotency'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -18,6 +19,10 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
   }
+
+  // Idempotency — Stripe peut rejouer un event. On ne traite qu'une fois.
+  const fresh = await recordWebhookEvent('stripe', event.id)
+  if (!fresh) return NextResponse.json({ received: true, duplicate: true })
 
   const getPlan = (priceId: string) => {
     if (priceId === process.env.STRIPE_STARTER_PRICE_ID) return 'starter' as const
