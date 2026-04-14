@@ -1,6 +1,7 @@
-import { db, openclawInstances, businessDocs, wizardSessions, ars } from '@/lib/db'
+import { db, openclawInstances, businesses, businessDocs, wizardSessions, ars } from '@/lib/db'
 import { eq, desc } from 'drizzle-orm'
 import crypto from 'crypto'
+import { orchestrator } from '@/lib/orchestrator'
 
 const PORT_RANGE_START = 19000
 const PORT_RANGE_END = 19999
@@ -31,49 +32,56 @@ async function findAvailablePreviewPort(): Promise<number> {
   throw new Error('No available preview ports')
 }
 
-async function buildWorkspaceContext(userId: string): Promise<{
+async function buildWorkspaceContext(businessId: string): Promise<{
   agentsMd: string
   soulMd: string
 }> {
-  const user = await db.query.users.findFirst({
-    where: (u, { eq }) => eq(u.id, userId),
-    columns: { id: true, email: true, firstName: true, lastName: true, plan: true, createdAt: true },
+  const business = await db.query.businesses.findFirst({
+    where: (b, { eq }) => eq(b.id, businessId),
+    columns: { id: true, userId: true, name: true, plan: true, createdAt: true },
   })
 
+  const user = business
+    ? await db.query.users.findFirst({
+        where: (u, { eq }) => eq(u.id, business.userId),
+        columns: { id: true, email: true, firstName: true, lastName: true, createdAt: true },
+      })
+    : null
+
   const latestDoc = await db.query.businessDocs.findFirst({
-    where: (d, { eq }) => eq(d.userId, userId),
+    where: (d, { eq }) => eq(d.businessId, businessId),
     orderBy: [desc(businessDocs.createdAt)],
   })
 
   const latestSession = await db.query.wizardSessions.findFirst({
-    where: (s, { eq }) => eq(s.userId, userId),
+    where: (s, { eq }) => eq(s.businessId, businessId),
     orderBy: [desc(wizardSessions.createdAt)],
   })
 
   const activeArs = await db.query.ars.findFirst({
-    where: (a, { eq }) => eq(a.userId, userId),
+    where: (a, { eq }) => eq(a.businessId, businessId),
   })
 
   const answers = latestSession?.answers as Record<string, string | string[]> | null
   const scorecard = activeArs?.scorecardData as Record<string, number> | null
 
-  const agentsMd = `# Agent MULTI — ${user?.firstName ?? 'Architecte'}
+  const agentsMd = `# Agent MULTI — ${business?.name ?? 'Business'}
 
-Tu es l'agent IA personnel de ${user?.firstName ?? 'l\'Architecte'} sur la plateforme MULTI.
+Tu es l'agent IA personnel de ${user?.firstName ?? 'l\'Architecte'} sur la plateforme MULTI, dédié au business "${business?.name ?? 'sans nom'}".
 Tu es un expert en stratégie business, marketing digital, et systèmes d'agents (ARS — Agentic Revenue Systems).
 
 ## Ton rôle
-- Conseiller stratégique pour le business de l'Architecte
+- Conseiller stratégique pour ce business
 - Répondre aux questions sur le BUSINESS.md, la scorecard, et les actions marketing
 - Proposer des améliorations concrètes et spécifiques
 - Rédiger du contenu marketing (posts, emails, descriptions) sur demande
 - Analyser les performances et suggérer des optimisations
 
-## Contexte utilisateur
-- Prénom : ${user?.firstName ?? 'Non renseigné'}
-- Email : ${user?.email ?? 'Non renseigné'}
-- Plan : ${user?.plan ?? 'Aucun plan actif'}
-- Inscrit depuis : ${user?.createdAt?.toLocaleDateString('fr-FR') ?? 'Inconnu'}
+## Contexte
+- Business : ${business?.name ?? 'Non renseigné'}
+- Architecte : ${user?.firstName ?? 'Non renseigné'} (${user?.email ?? '-'})
+- Plan : ${business?.plan ?? 'Aucun plan actif'}
+- Créé le : ${business?.createdAt?.toLocaleDateString('fr-FR') ?? 'Inconnu'}
 
 ## Réponses du wizard
 ${answers ? Object.entries(answers).map(([k, v]) => `- ${k} : ${Array.isArray(v) ? v.join(', ') : v}`).join('\n') : 'Aucune réponse de wizard disponible.'}
@@ -274,22 +282,6 @@ function buildPairedDeviceEntry(deviceId: string, pubKeyB64Url: string) {
   }
 }
 
-async function dockerExec(args: string[]): Promise<string> {
-  const { execFile } = await import('child_process')
-  const { promisify } = await import('util')
-  const execFileAsync = promisify(execFile)
-  try {
-    const { stdout, stderr } = await execFileAsync('docker', args, { timeout: 60_000 })
-    return (stdout || stderr || '').trim()
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; stderr?: string; message?: string }
-    // Some docker commands output to stderr even on success
-    if (err.stdout) return err.stdout.trim()
-    if (err.stderr) return err.stderr.trim()
-    throw e
-  }
-}
-
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -310,13 +302,13 @@ function getHomeDir(containerName: string): string {
  *   4. Patch config with our model + bind settings
  *   5. Restart container to apply
  */
-export async function provisionOpenClaw(userId: string): Promise<{
+export async function provisionOpenClaw(businessId: string): Promise<{
   instanceId: string
   port: number
   status: string
 }> {
   const existing = await db.query.openclawInstances.findFirst({
-    where: (o, { eq }) => eq(o.userId, userId),
+    where: (o, { eq }) => eq(o.businessId, businessId),
   })
 
   if (existing && existing.status === 'running') {
@@ -324,17 +316,16 @@ export async function provisionOpenClaw(userId: string): Promise<{
   }
 
   if (existing) {
-    try { await dockerExec(['rm', '-f', existing.containerName]) } catch { /* ignore */ }
+    await orchestrator.remove(existing.containerName)
     await db.delete(openclawInstances).where(eq(openclawInstances.id, existing.id))
   }
 
   const port = await findAvailablePort()
   const previewPort = await findAvailablePreviewPort()
-  const containerName = `openclaw-${userId.slice(0, 8)}`
+  const containerName = `openclaw-${businessId.slice(0, 8)}`
 
-  // Create instance record (token will be filled after OpenClaw generates it)
   const [instance] = await db.insert(openclawInstances).values({
-    userId,
+    businessId,
     containerName,
     port,
     previewPort,
@@ -343,8 +334,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
   }).returning()
 
   try {
-    // Build workspace
-    const { agentsMd, soulMd } = await buildWorkspaceContext(userId)
+    const { agentsMd, soulMd } = await buildWorkspaceContext(businessId)
     const homeDir = `/tmp/openclaw-homes/${containerName}`
     const fs = await import('fs/promises')
     await fs.mkdir(`${homeDir}/workspace`, { recursive: true })
@@ -352,7 +342,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
     await fs.writeFile(`${homeDir}/workspace/SOUL.md`, soulMd, 'utf-8')
     // Also write BUSINESS.md as a standalone file (OpenClaw tools can read it)
     const latestDoc = await db.query.businessDocs.findFirst({
-      where: (d, { eq }) => eq(d.userId, userId),
+      where: (d, { eq }) => eq(d.businessId, businessId),
       orderBy: [desc(businessDocs.createdAt)],
     })
     if (latestDoc) {
@@ -360,25 +350,25 @@ export async function provisionOpenClaw(userId: string): Promise<{
     }
 
     // Fix ownership for node user (uid 1000)
-    await dockerExec(['run', '--rm', '-v', `${homeDir}:/fix`, 'alpine', 'chown', '-R', '1000:1000', '/fix'])
+    await orchestrator.fixOwnership(homeDir, '1000:1000')
 
     // === PHASE 1: Start container (OpenClaw will auto-generate config) ===
-    const containerId = await dockerExec([
-      'run', '-d',
-      '--name', containerName,
-      '--network', DOCKER_NETWORK,
-      '-p', `${port}:18789`,
-      '-p', `${previewPort}:3000`,
-      '-v', `${homeDir}:/home/node/.openclaw`,
-      // No OPENROUTER_API_KEY — containers use the LLM proxy instead
-      '--restart', 'unless-stopped',
-      '--memory', '1g',
-      '--cpus', '1',
-      OPENCLAW_IMAGE,
-    ])
+    const { id: containerId } = await orchestrator.create({
+      name: containerName,
+      image: OPENCLAW_IMAGE,
+      network: DOCKER_NETWORK,
+      ports: [
+        { host: port, container: 18789 },
+        { host: previewPort, container: 3000 },
+      ],
+      volumes: [{ hostPath: homeDir, containerPath: '/home/node/.openclaw' }],
+      restartPolicy: 'unless-stopped',
+      memory: '1g',
+      cpus: '1',
+    })
 
     await db.update(openclawInstances)
-      .set({ containerId: containerId.slice(0, 12), updatedAt: new Date() })
+      .set({ containerId, updatedAt: new Date() })
       .where(eq(openclawInstances.id, instance.id))
 
     // === PHASE 2: Wait for OpenClaw to start and generate config ===
@@ -397,9 +387,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
           console.log('[openclaw] config found, patching...')
 
           // === PHASE 3: Patch config ===
-          // Resolve agent model from gateway (plan-aware)
           const { resolveOpenClawModel } = await import('@/lib/llm/gateway')
-          const openclawModel = await resolveOpenClawModel(userId)
+          const openclawModel = await resolveOpenClawModel(businessId)
 
           config.agents = config.agents || {}
           config.agents.defaults = config.agents.defaults || {}
@@ -432,7 +421,8 @@ export async function provisionOpenClaw(userId: string): Promise<{
           }
 
           // Enable cron scheduler with webhook callback
-          const webhookSecret = process.env.OPENCLAW_WEBHOOK_SECRET || 'multi-cron-webhook-secret'
+          const webhookSecret = process.env.OPENCLAW_WEBHOOK_SECRET
+          if (!webhookSecret) throw new Error('OPENCLAW_WEBHOOK_SECRET is required')
           config.cron = config.cron || {}
           config.cron.enabled = true
           config.cron.webhook = `${appHost}/api/agents/webhook`
@@ -472,62 +462,47 @@ export async function provisionOpenClaw(userId: string): Promise<{
           }), 'utf-8')
 
           // Fix permissions on all files we wrote (node user uid 1000)
-          await dockerExec([
-            'run', '--rm',
-            '-v', `${homeDir}:/fix`,
-            'alpine', 'chown', '-R', '1000:1000', '/fix',
-          ])
+          await orchestrator.fixOwnership(homeDir, '1000:1000')
 
           // === PHASE 4b: Install default skills ===
           console.log('[openclaw] installing default skills...')
+          const skillsInstallCmd = [
+            'mkdir -p /home/node/.openclaw/workspace/skills',
+            'git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git /tmp/uupm 2>&1 || true',
+            'mkdir -p /home/node/.openclaw/workspace/skills/ui-ux-pro-max',
+            'cp /tmp/uupm/.claude/skills/ui-ux-pro-max/SKILL.md /home/node/.openclaw/workspace/skills/ui-ux-pro-max/SKILL.md 2>/dev/null || true',
+            'cp -r /tmp/uupm/.claude/skills/design /home/node/.openclaw/workspace/skills/design 2>/dev/null || true',
+            'cp -r /tmp/uupm/.claude/skills/ui-styling /home/node/.openclaw/workspace/skills/ui-styling 2>/dev/null || true',
+            'cp -r /tmp/uupm/.claude/skills/brand /home/node/.openclaw/workspace/skills/brand 2>/dev/null || true',
+            'cp -r /tmp/uupm/.claude/skills/design-system /home/node/.openclaw/workspace/skills/design-system 2>/dev/null || true',
+            'cp -r /tmp/uupm /home/node/.openclaw/workspace/skills/ui-ux-pro-max-skill 2>/dev/null || true',
+            'rm -rf /tmp/uupm',
+          ].join(' && ')
           try {
-            await dockerExec([
-              'exec', containerName, 'sh', '-c',
-              [
-                // Clone the repo
-                'mkdir -p /home/node/.openclaw/workspace/skills',
-                'git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git /tmp/uupm 2>&1 || true',
-                // Copy as OpenClaw-compatible skill (SKILL.md at root of skill dir)
-                'mkdir -p /home/node/.openclaw/workspace/skills/ui-ux-pro-max',
-                'cp /tmp/uupm/.claude/skills/ui-ux-pro-max/SKILL.md /home/node/.openclaw/workspace/skills/ui-ux-pro-max/SKILL.md 2>/dev/null || true',
-                // Copy reference files the skill needs
-                'cp -r /tmp/uupm/.claude/skills/design /home/node/.openclaw/workspace/skills/design 2>/dev/null || true',
-                'cp -r /tmp/uupm/.claude/skills/ui-styling /home/node/.openclaw/workspace/skills/ui-styling 2>/dev/null || true',
-                'cp -r /tmp/uupm/.claude/skills/brand /home/node/.openclaw/workspace/skills/brand 2>/dev/null || true',
-                'cp -r /tmp/uupm/.claude/skills/design-system /home/node/.openclaw/workspace/skills/design-system 2>/dev/null || true',
-                // Also keep full repo as reference
-                'cp -r /tmp/uupm /home/node/.openclaw/workspace/skills/ui-ux-pro-max-skill 2>/dev/null || true',
-                'rm -rf /tmp/uupm',
-              ].join(' && '),
-            ])
+            await orchestrator.exec(containerName, ['sh', '-c', skillsInstallCmd])
             console.log('[openclaw] skill ui-ux-pro-max-skill installed')
           } catch (e) {
             console.log('[openclaw] skill install failed:', e instanceof Error ? e.message : e)
           }
 
           // === PHASE 5: Set exec approvals to auto-approve all ===
+          const approvalsCmd = 'echo \'{"version":1,"defaults":{"security":"full","ask":"off","autoAllowSkills":true},"agents":{"main":{"security":"full","ask":"off"}}}\' | openclaw approvals set --stdin && openclaw approvals allowlist add --agent "*" "*" && openclaw approvals allowlist add --agent "main" "*"'
           console.log('[openclaw] setting exec approvals to auto-approve...')
           try {
-            await dockerExec([
-              'exec', containerName, 'sh', '-c',
-              'echo \'{"version":1,"defaults":{"security":"full","ask":"off","autoAllowSkills":true},"agents":{"main":{"security":"full","ask":"off"}}}\' | openclaw approvals set --stdin && openclaw approvals allowlist add --agent "*" "*" && openclaw approvals allowlist add --agent "main" "*"',
-            ])
+            await orchestrator.exec(containerName, ['sh', '-c', approvalsCmd])
           } catch (e) {
             console.log('[openclaw] exec approvals set failed (will retry after restart):', e instanceof Error ? e.message : e)
           }
 
           // === PHASE 6: Restart container to apply config + paired device ===
           console.log('[openclaw] restarting container...')
-          await dockerExec(['restart', containerName])
+          await orchestrator.restart(containerName)
 
           await sleep(20_000)
 
           // Set exec approvals again after restart (in case first attempt failed)
           try {
-            await dockerExec([
-              'exec', containerName, 'sh', '-c',
-              'echo \'{"version":1,"defaults":{"security":"full","ask":"off","autoAllowSkills":true},"agents":{"main":{"security":"full","ask":"off"}}}\' | openclaw approvals set --stdin && openclaw approvals allowlist add --agent "*" "*" && openclaw approvals allowlist add --agent "main" "*"',
-            ])
+            await orchestrator.exec(containerName, ['sh', '-c', approvalsCmd])
             console.log('[openclaw] exec approvals set: security=full, ask=off')
           } catch { /* ignore */ }
 
@@ -537,7 +512,7 @@ export async function provisionOpenClaw(userId: string): Promise<{
           const finalToken = finalConfig.gateway?.auth?.token ?? config.gateway.auth.token
 
           console.log(`[openclaw] final token: ${finalToken.slice(0, 10)}...`)
-          console.log(`[openclaw] device paired: ${device.deviceId.slice(0, 16)}...`)
+          console.log(`[openclaw] device paired: ${device.deviceId.slice(0, 16)}... (business ${businessId.slice(0, 8)})`)
 
           await db.update(openclawInstances)
             .set({
@@ -568,21 +543,21 @@ export async function provisionOpenClaw(userId: string): Promise<{
   }
 }
 
-export async function stopOpenClaw(userId: string): Promise<void> {
+export async function stopOpenClaw(businessId: string): Promise<void> {
   const instance = await db.query.openclawInstances.findFirst({
-    where: (o, { eq }) => eq(o.userId, userId),
+    where: (o, { eq }) => eq(o.businessId, businessId),
   })
   if (!instance) return
 
-  try { await dockerExec(['rm', '-f', instance.containerName]) } catch { /* ignore */ }
+  await orchestrator.remove(instance.containerName)
   await db.update(openclawInstances)
     .set({ status: 'stopped', updatedAt: new Date() })
     .where(eq(openclawInstances.id, instance.id))
 }
 
-export async function getOpenClawInstance(userId: string) {
+export async function getOpenClawInstance(businessId: string) {
   return db.query.openclawInstances.findFirst({
-    where: (o, { eq }) => eq(o.userId, userId),
+    where: (o, { eq }) => eq(o.businessId, businessId),
   })
 }
 
@@ -666,11 +641,11 @@ export function cleanOpenClawResponse(content: string): string {
     .trim()
 }
 
-export async function refreshWorkspace(userId: string): Promise<void> {
-  const instance = await getOpenClawInstance(userId)
+export async function refreshWorkspace(businessId: string): Promise<void> {
+  const instance = await getOpenClawInstance(businessId)
   if (!instance || instance.status !== 'running') return
 
-  const { agentsMd, soulMd } = await buildWorkspaceContext(userId)
+  const { agentsMd, soulMd } = await buildWorkspaceContext(businessId)
   const homeDir = `/tmp/openclaw-homes/${instance.containerName}`
 
   const fs = await import('fs/promises')
@@ -678,7 +653,7 @@ export async function refreshWorkspace(userId: string): Promise<void> {
   await fs.writeFile(`${homeDir}/workspace/SOUL.md`, soulMd, 'utf-8')
 
   const latestDoc = await db.query.businessDocs.findFirst({
-    where: (d, { eq }) => eq(d.userId, userId),
+    where: (d, { eq }) => eq(d.businessId, businessId),
     orderBy: [desc(businessDocs.createdAt)],
   })
   if (latestDoc) {
@@ -690,8 +665,8 @@ export async function refreshWorkspace(userId: string): Promise<void> {
  * Hot-swap the LLM model on a running OpenClaw container.
  * Patches openclaw.json, restarts the container, and disconnects the active WS session.
  */
-export async function hotSwapAgentModel(userId: string, newModel: string): Promise<void> {
-  const instance = await getOpenClawInstance(userId)
+export async function hotSwapAgentModel(businessId: string, newModel: string): Promise<void> {
+  const instance = await getOpenClawInstance(businessId)
   if (!instance || instance.status !== 'running') {
     throw new Error('OpenClaw instance not running')
   }
@@ -735,20 +710,20 @@ export async function hotSwapAgentModel(userId: string, newModel: string): Promi
   await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8')
 
   // 3. Fix permissions
-  await dockerExec(['run', '--rm', '-v', `${homeDir}:/fix`, 'alpine', 'chown', '-R', '1000:1000', '/fix'])
+  await orchestrator.fixOwnership(homeDir, '1000:1000')
 
   // 4. Disconnect active WS session (will auto-reconnect on next message)
   const { sessionManager } = await import('./session-manager')
-  sessionManager.disconnect(userId)
+  sessionManager.disconnect(businessId)
 
   // 5. Restart container
-  await dockerExec(['restart', instance.containerName])
+  await orchestrator.restart(instance.containerName)
 
-  console.log(`[openclaw] hot-swapped model to multi/${modelId} for user ${userId.slice(0, 8)}`)
+  console.log(`[openclaw] hot-swapped model to multi/${modelId} for business ${businessId.slice(0, 8)}`)
 }
 
-export async function checkHealth(userId: string): Promise<boolean> {
-  const instance = await getOpenClawInstance(userId)
+export async function checkHealth(businessId: string): Promise<boolean> {
+  const instance = await getOpenClawInstance(businessId)
   if (!instance || instance.status !== 'running') return false
 
   try {

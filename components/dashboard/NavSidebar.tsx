@@ -17,19 +17,35 @@ const NAV_ITEMS = [
 interface UserInfo {
   email: string
   firstName: string | null
-  plan: string | null
   stripeCustomerId: string | null
+}
+
+interface BusinessInfo {
+  id: string
+  name: string
+  plan: string | null
+  subscriptionStatus: string | null
 }
 
 export function NavSidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const [user, setUser] = useState<UserInfo | null>(null)
+  const [business, setBusiness] = useState<BusinessInfo | null>(null)
+  const [businesses, setBusinesses] = useState<BusinessInfo[]>([])
+  const [switcherOpen, setSwitcherOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/auth/me')
       .then(r => r.json())
-      .then(data => { if (data.user) setUser(data.user) })
+      .then(data => {
+        if (data.user) setUser(data.user)
+        if (data.business) setBusiness(data.business)
+      })
+      .catch(() => {})
+    fetch('/api/business')
+      .then(r => r.json())
+      .then(data => { if (data.businesses) setBusinesses(data.businesses) })
       .catch(() => {})
   }, [])
 
@@ -44,6 +60,15 @@ export function NavSidebar() {
     if (data.url) window.location.href = data.url
   }
 
+  const handleSwitchBusiness = async (businessId: string) => {
+    const res = await fetch('/api/business/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessId }),
+    })
+    if (res.ok) window.location.reload()
+  }
+
   return (
     <aside className="w-56 shrink-0 border-r border-ui-border bg-ui-bg-secondary h-screen sticky top-0 flex flex-col">
       <div className="px-4 py-4 border-b border-ui-border">
@@ -51,6 +76,42 @@ export function NavSidebar() {
           MULTI
         </Link>
       </div>
+
+      {business && (
+        <div className="px-3 py-2 border-b border-ui-border relative">
+          <button
+            onClick={() => setSwitcherOpen(o => !o)}
+            className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-ui-bg-tertiary transition-colors text-left"
+          >
+            <div className="min-w-0">
+              <p className="text-xs text-ui-text-tertiary">Business</p>
+              <p className="text-sm text-ui-text-primary truncate">{business.name}</p>
+            </div>
+            <span className="text-xs text-ui-text-tertiary">▾</span>
+          </button>
+          {switcherOpen && (
+            <div className="absolute left-2 right-2 mt-1 bg-ui-bg-secondary border border-ui-border rounded-lg shadow-lg z-10">
+              {businesses.map(b => (
+                <button
+                  key={b.id}
+                  onClick={() => handleSwitchBusiness(b.id)}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-ui-bg-tertiary ${
+                    b.id === business.id ? 'text-brand-violet font-medium' : 'text-ui-text-primary'
+                  }`}
+                >
+                  {b.name}
+                </button>
+              ))}
+              <Link
+                href="/"
+                className="block px-3 py-2 text-sm text-ui-text-tertiary hover:bg-ui-bg-tertiary border-t border-ui-border"
+              >
+                + Nouveau business
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
 
       <nav className="flex-1 px-2 py-3 space-y-0.5">
         {NAV_ITEMS.map((item) => {
@@ -79,9 +140,9 @@ export function NavSidebar() {
               {user.firstName || user.email}
             </p>
             <p className="text-xs text-ui-text-tertiary truncate">{user.email}</p>
-            {user.plan && (
+            {business?.plan && (
               <span className="inline-block mt-1 px-2 py-0.5 text-[10px] font-medium uppercase rounded-full bg-brand-violet-light text-brand-violet">
-                {user.plan}
+                {business.plan}
               </span>
             )}
           </div>

@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
 
   const instance = await db.query.openclawInstances.findFirst({
     where: (o, { eq }) => eq(o.gatewayToken, token),
-    columns: { userId: true, containerName: true },
+    columns: { businessId: true, containerName: true },
   })
   if (!instance) {
     return NextResponse.json({ error: { message: 'Invalid token', type: 'auth_error' } }, { status: 401 })
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
           controller.close()
           // Log usage after stream ends
           if (usageData) {
-            logUsage(instance.userId, body.model || 'unknown', 'agent', usageData).catch(console.error)
+            logUsage(instance.businessId, body.model || 'unknown', 'agent', usageData).catch(console.error)
           }
           return
         }
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   const data = await openrouterResponse.json()
 
   if (data.usage) {
-    logUsage(instance.userId, body.model || 'unknown', 'agent', data.usage).catch(console.error)
+    logUsage(instance.businessId, body.model || 'unknown', 'agent', data.usage).catch(console.error)
   }
 
   return NextResponse.json(data)

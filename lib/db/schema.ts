@@ -21,8 +21,24 @@ export const users = pgTable('users', {
   passwordHash:                varchar('password_hash', { length: 255 }).notNull(),
   firstName:                   varchar('first_name', { length: 100 }),
   lastName:                    varchar('last_name', { length: 100 }),
-  plan:                        planEnum('plan'),
   stripeCustomerId:            varchar('stripe_customer_id', { length: 255 }).unique(),
+  createdAt:                   timestamp('created_at').defaultNow().notNull(),
+  updatedAt:                   timestamp('updated_at').defaultNow().notNull(),
+})
+
+// ─── BUSINESSES ─────────────────────────────────────────────────────────────
+// B2B light : 1 user → N businesses. Facturation par business.
+
+export const businessStatusEnum = pgEnum('business_status', [
+  'active', 'paused', 'archived',
+])
+
+export const businesses = pgTable('businesses', {
+  id:                          uuid('id').primaryKey().defaultRandom(),
+  userId:                      uuid('user_id').references(() => users.id).notNull(),
+  name:                        varchar('name', { length: 255 }).notNull(),
+  status:                      businessStatusEnum('status').default('active').notNull(),
+  plan:                        planEnum('plan'),
   stripeSubscriptionId:        varchar('stripe_subscription_id', { length: 255 }).unique(),
   subscriptionStatus:          subscriptionStatusEnum('subscription_status'),
   subscriptionCurrentPeriodEnd: timestamp('subscription_current_period_end'),
@@ -32,9 +48,12 @@ export const users = pgTable('users', {
 
 // ─── WIZARD SESSIONS ────────────────────────────────────────────────────────
 
+// Wizard sessions can be anon (no userId) or logged-in.
+// Après signup + completion → création d'un business, on set businessId.
 export const wizardSessions = pgTable('wizard_sessions', {
   id:                      uuid('id').primaryKey().defaultRandom(),
   userId:                  uuid('user_id').references(() => users.id),
+  businessId:              uuid('business_id').references(() => businesses.id),
   answers:                 jsonb('answers').$type<Record<string, string | string[]>>(),
   lastQuestionId:          varchar('last_question_id', { length: 50 }),
   completedAt:             timestamp('completed_at'),
@@ -50,7 +69,7 @@ export const wizardSessions = pgTable('wizard_sessions', {
 
 export const businessDocs = pgTable('business_docs', {
   id:                  uuid('id').primaryKey().defaultRandom(),
-  userId:              uuid('user_id').references(() => users.id).notNull(),
+  businessId:          uuid('business_id').references(() => businesses.id).notNull(),
   sessionId:           uuid('session_id').references(() => wizardSessions.id),
   content:             text('content').notNull(),
   version:             integer('version').default(1).notNull(),
@@ -80,7 +99,7 @@ export const businessDocVersions = pgTable('business_doc_versions', {
 
 export const ars = pgTable('ars', {
   id:                    uuid('id').primaryKey().defaultRandom(),
-  userId:                uuid('user_id').references(() => users.id).notNull(),
+  businessId:            uuid('business_id').references(() => businesses.id).notNull(),
   businessDocId:         uuid('business_doc_id').references(() => businessDocs.id),
   name:                  varchar('name', { length: 255 }).notNull(),
   status:                arsStatusEnum('status').default('active').notNull(),
@@ -102,7 +121,8 @@ export const actionStatusEnum = pgEnum('action_status', [
 export const actionValidations = pgTable('action_validations', {
   id:          uuid('id').primaryKey().defaultRandom(),
   arsId:       uuid('ars_id').references(() => ars.id).notNull(),
-  userId:      uuid('user_id').references(() => users.id).notNull(),
+  businessId:  uuid('business_id').references(() => businesses.id).notNull(),
+  userId:      uuid('user_id').references(() => users.id).notNull(),  // qui a validé
   actionType:  varchar('action_type', { length: 100 }).notNull(),
   description: text('description').notNull(),
   status:      actionStatusEnum('status').default('pending').notNull(),
@@ -120,7 +140,7 @@ export const openclawStatusEnum = pgEnum('openclaw_status', [
 
 export const openclawInstances = pgTable('openclaw_instances', {
   id:            uuid('id').primaryKey().defaultRandom(),
-  userId:        uuid('user_id').references(() => users.id).notNull().unique(),
+  businessId:    uuid('business_id').references(() => businesses.id).notNull().unique(),
   containerId:   varchar('container_id', { length: 100 }),
   containerName: varchar('container_name', { length: 100 }).notNull(),
   port:          integer('port').notNull(),
@@ -138,7 +158,7 @@ export const openclawInstances = pgTable('openclaw_instances', {
 
 export const conversations = pgTable('conversations', {
   id:         uuid('id').primaryKey().defaultRandom(),
-  userId:     uuid('user_id').references(() => users.id).notNull(),
+  businessId: uuid('business_id').references(() => businesses.id).notNull(),
   title:      varchar('title', { length: 255 }).notNull(),
   lastMessageAt: timestamp('last_message_at'),
   createdAt:  timestamp('created_at').defaultNow().notNull(),
@@ -148,7 +168,7 @@ export const conversations = pgTable('conversations', {
 
 export const chatMessages = pgTable('chat_messages', {
   id:             uuid('id').primaryKey().defaultRandom(),
-  userId:         uuid('user_id').references(() => users.id).notNull(),
+  businessId:     uuid('business_id').references(() => businesses.id).notNull(),
   conversationId: uuid('conversation_id').references(() => conversations.id).notNull(),
   role:           varchar('role', { length: 20 }).notNull(),
   content:        text('content').notNull(),
@@ -164,7 +184,7 @@ export const toolApprovalEnum = pgEnum('tool_approval_decision', [
 
 export const toolApprovals = pgTable('tool_approvals', {
   id:            uuid('id').primaryKey().defaultRandom(),
-  userId:        uuid('user_id').references(() => users.id).notNull(),
+  businessId:    uuid('business_id').references(() => businesses.id).notNull(),
   openclawId:    varchar('openclaw_id', { length: 255 }).notNull(), // approval ID from OpenClaw
   toolType:      varchar('tool_type', { length: 20 }).notNull(), // 'exec' | 'plugin'
   command:       text('command'),
@@ -183,7 +203,7 @@ export const agentJobStatusEnum = pgEnum('agent_job_status', [
 
 export const agentJobs = pgTable('agent_jobs', {
   id:               uuid('id').primaryKey().defaultRandom(),
-  userId:           uuid('user_id').references(() => users.id).notNull(),
+  businessId:       uuid('business_id').references(() => businesses.id).notNull(),
   openclawCronId:   varchar('openclaw_cron_id', { length: 100 }),
   name:             varchar('name', { length: 255 }).notNull(),
   icon:             varchar('icon', { length: 10 }).default('🤖').notNull(),
@@ -207,7 +227,7 @@ export const agentRunStatusEnum = pgEnum('agent_run_status', [
 export const agentJobRuns = pgTable('agent_job_runs', {
   id:          uuid('id').primaryKey().defaultRandom(),
   jobId:       uuid('job_id').references(() => agentJobs.id).notNull(),
-  userId:      uuid('user_id').references(() => users.id).notNull(),
+  businessId:  uuid('business_id').references(() => businesses.id).notNull(),
   status:      agentRunStatusEnum('status').default('running').notNull(),
   output:      text('output'),
   startedAt:   timestamp('started_at').defaultNow().notNull(),
@@ -235,7 +255,7 @@ export const modelConfigs = pgTable('model_configs', {
 
 export const llmUsage = pgTable('llm_usage', {
   id:               uuid('id').primaryKey().defaultRandom(),
-  userId:           uuid('user_id').references(() => users.id).notNull(),
+  businessId:       uuid('business_id').references(() => businesses.id).notNull(),
   model:            varchar('model', { length: 255 }).notNull(),
   promptTokens:     integer('prompt_tokens').notNull(),
   completionTokens: integer('completion_tokens').notNull(),
@@ -265,6 +285,7 @@ export const analyticsEvents = pgTable('analytics_events', {
   id:         uuid('id').primaryKey().defaultRandom(),
   sessionId:  uuid('session_id').references(() => wizardSessions.id),
   userId:     uuid('user_id').references(() => users.id),
+  businessId: uuid('business_id').references(() => businesses.id),
   event:      varchar('event', { length: 100 }).notNull(),
   properties: jsonb('properties').$type<Record<string, unknown>>(),
   device:     varchar('device', { length: 20 }),
@@ -276,6 +297,8 @@ export const analyticsEvents = pgTable('analytics_events', {
 
 export type User            = typeof users.$inferSelect
 export type NewUser         = typeof users.$inferInsert
+export type Business        = typeof businesses.$inferSelect
+export type NewBusiness     = typeof businesses.$inferInsert
 export type WizardSession   = typeof wizardSessions.$inferSelect
 export type NewWizardSession= typeof wizardSessions.$inferInsert
 export type BusinessDoc     = typeof businessDocs.$inferSelect

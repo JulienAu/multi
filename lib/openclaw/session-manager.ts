@@ -1,46 +1,43 @@
 import 'server-only'
 import { OpenClawClient, type OpenClawEvent, type ToolApprovalRequest } from './ws-client'
-import { db, toolApprovals, chatMessages, openclawInstances } from '@/lib/db'
+import { db, toolApprovals, openclawInstances } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 
 type StreamCallback = (event: OpenClawEvent) => void
 
-interface UserSession {
+interface BusinessSession {
   client: OpenClawClient
-  userId: string
+  businessId: string
   listeners: Set<StreamCallback>
   pendingApprovals: Map<string, ToolApprovalRequest>
 }
 
 /**
- * Singleton that manages one WebSocket connection per user to their OpenClaw container.
+ * Singleton that manages one WebSocket connection per business to its OpenClaw container.
  */
 class SessionManager {
-  private sessions = new Map<string, UserSession>()
+  private sessions = new Map<string, BusinessSession>()
 
   /**
-   * Get or create a WS session for a user.
+   * Get or create a WS session for a business.
    */
-  async getSession(userId: string): Promise<UserSession> {
-    const existing = this.sessions.get(userId)
+  async getSession(businessId: string): Promise<BusinessSession> {
+    const existing = this.sessions.get(businessId)
     if (existing?.client.isConnected) return existing
 
-    // Clean up old session
     if (existing) {
       existing.client.disconnect()
-      this.sessions.delete(userId)
+      this.sessions.delete(businessId)
     }
 
-    // Get instance info
     const instance = await db.query.openclawInstances.findFirst({
-      where: (o, { eq }) => eq(o.userId, userId),
+      where: (o, { eq }) => eq(o.businessId, businessId),
     })
 
     if (!instance || instance.status !== 'running') {
       throw new Error('OpenClaw instance not running')
     }
 
-    // Load device identity for signed WS connection
     const fs = await import('fs/promises')
     let deviceIdentity: { deviceId: string; pubKeyB64Url: string; privPem: string } | undefined
     try {
@@ -73,33 +70,28 @@ class SessionManager {
       throw new Error(`Could not connect to OpenClaw: ${lastError}`)
     }
 
-    const session: UserSession = {
+    const session: BusinessSession = {
       client,
-      userId,
+      businessId,
       listeners: new Set(),
       pendingApprovals: new Map(),
     }
 
-    // Handle all events from OpenClaw
     client.on('event', async (event: OpenClawEvent) => {
-      // Tool approval handling
       if (event.type === 'tool.requested') {
         session.pendingApprovals.set(event.request.id, event.request)
 
-        // Check auto-approve setting
         const inst = await db.query.openclawInstances.findFirst({
-          where: (o, { eq }) => eq(o.userId, userId),
+          where: (o, { eq }) => eq(o.businessId, businessId),
         })
 
         if (inst?.autoApprove) {
-          // Auto-approve
           try {
             await client!.resolveApproval(event.request.id, 'allow-once', event.request.type)
             session.pendingApprovals.delete(event.request.id)
 
-            // Save auto-approved record
             await db.insert(toolApprovals).values({
-              userId,
+              businessId,
               openclawId: event.request.id,
               toolType: event.request.type,
               command: event.request.command ?? null,
@@ -109,7 +101,6 @@ class SessionManager {
               decidedAt: new Date(),
             })
 
-            // Notify listeners that tool was auto-approved
             for (const cb of session.listeners) {
               cb({ type: 'tool.resolved', id: event.request.id, decision: 'allow-once (auto)' })
             }
@@ -119,9 +110,8 @@ class SessionManager {
           return
         }
 
-        // Save pending approval in DB
         await db.insert(toolApprovals).values({
-          userId,
+          businessId,
           openclawId: event.request.id,
           toolType: event.request.type,
           command: event.request.command ?? null,
@@ -131,50 +121,39 @@ class SessionManager {
         })
       }
 
-      // Forward all events to listeners (SSE streams)
       for (const cb of session.listeners) {
         cb(event)
       }
     })
 
-    this.sessions.set(userId, session)
+    this.sessions.set(businessId, session)
     return session
   }
 
-  /**
-   * Send a message to the user's agent.
-   */
-  async sendMessage(userId: string, text: string): Promise<void> {
-    const session = await this.getSession(userId)
+  async sendMessage(businessId: string, text: string): Promise<void> {
+    const session = await this.getSession(businessId)
     await session.client.sendMessage(text)
   }
 
-  /**
-   * Resolve a tool approval.
-   */
   async resolveApproval(
-    userId: string,
+    businessId: string,
     openclawId: string,
     decision: 'allow-once' | 'allow-always' | 'deny',
   ): Promise<void> {
-    const session = await this.getSession(userId)
+    const session = await this.getSession(businessId)
     const request = session.pendingApprovals.get(openclawId)
     const toolType = request?.type ?? 'exec'
 
     await session.client.resolveApproval(openclawId, decision, toolType)
     session.pendingApprovals.delete(openclawId)
 
-    // Update DB
     await db.update(toolApprovals)
       .set({ decision, decidedAt: new Date() })
       .where(eq(toolApprovals.openclawId, openclawId))
   }
 
-  /**
-   * Add a stream listener for a user's events.
-   */
-  addListener(userId: string, callback: StreamCallback): () => void {
-    const session = this.sessions.get(userId)
+  addListener(businessId: string, callback: StreamCallback): () => void {
+    const session = this.sessions.get(businessId)
     if (session) {
       session.listeners.add(callback)
       return () => session.listeners.delete(callback)
@@ -182,35 +161,25 @@ class SessionManager {
     return () => {}
   }
 
-  /**
-   * Toggle auto-approve for a user.
-   */
-  async setAutoApprove(userId: string, enabled: boolean): Promise<void> {
+  async setAutoApprove(businessId: string, enabled: boolean): Promise<void> {
     await db.update(openclawInstances)
       .set({ autoApprove: enabled, updatedAt: new Date() })
-      .where(eq(openclawInstances.userId, userId))
+      .where(eq(openclawInstances.businessId, businessId))
   }
 
-  /**
-   * Get pending approvals for a user.
-   */
-  getPendingApprovals(userId: string): ToolApprovalRequest[] {
-    const session = this.sessions.get(userId)
+  getPendingApprovals(businessId: string): ToolApprovalRequest[] {
+    const session = this.sessions.get(businessId)
     if (!session) return []
     return Array.from(session.pendingApprovals.values())
   }
 
-  /**
-   * Disconnect a user's session.
-   */
-  disconnect(userId: string) {
-    const session = this.sessions.get(userId)
+  disconnect(businessId: string) {
+    const session = this.sessions.get(businessId)
     if (session) {
       session.client.disconnect()
-      this.sessions.delete(userId)
+      this.sessions.delete(businessId)
     }
   }
 }
 
-// Singleton
 export const sessionManager = new SessionManager()

@@ -1,0 +1,103 @@
+# Base NetworkPolicies — applied to the `multi` namespace.
+# Per-business workspace namespaces are created dynamically by the k3s orchestrator
+# and get their own default-deny policies (cf. lib/orchestrator/k3s.ts when implemented).
+
+# 1. Default deny all egress from the app namespace unless allowed below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: multi
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# 2. Allow ingress from Traefik (default k3s ingress controller in kube-system).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-ingress
+  namespace: multi
+spec:
+  podSelector:
+    matchLabels:
+      app: multi-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 3000
+          protocol: TCP
+
+---
+# 3. Allow app egress to DNS + HTTPS (OpenRouter, Stripe, Postmark, etc.)
+# Neon DB: allow TCP 5432 to any destination (Neon is cloud-hosted).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress
+  namespace: multi
+spec:
+  podSelector:
+    matchLabels:
+      app: multi-app
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # HTTPS outbound (APIs tierces)
+    - ports:
+        - port: 443
+          protocol: TCP
+    # Postgres (Neon)
+    - ports:
+        - port: 5432
+          protocol: TCP
+    # Webhook from user workspaces to app (they'll be in workspace-* namespaces)
+    - to:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["multi"]
+      ports:
+        - port: 3000
+          protocol: TCP
+
+---
+# 4. Allow user workspaces to reach app's /api/llm/v1 and /api/agents/webhook ONLY.
+# (En pratique : tout pod dans un namespace `workspace-*` peut taper le service multi-app.
+# La restriction au path est faite côté app via auth token, pas au niveau réseau.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-workspaces
+  namespace: multi
+spec:
+  podSelector:
+    matchLabels:
+      app: multi-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              tier: workspace
+      ports:
+        - port: 3000
+          protocol: TCP

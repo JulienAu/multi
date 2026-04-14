@@ -92,7 +92,10 @@
       "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); delete c.session; if\\(c.gateway?.http?.endpoints?.chatCompletions?.timeoutSeconds\\) delete c.gateway.http.endpoints.chatCompletions.timeoutSeconds; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
       "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e ':*)",
       "Bash(/home/julien/.nvm/versions/node/v22.17.1/bin/node -e \" let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{ const c=JSON.parse\\(d\\); // Set idle timeout for LLM to 300s \\(default is 60s\\) c.agents.defaults.llm = c.agents.defaults.llm || {}; c.agents.defaults.llm.idleTimeoutSeconds = 300; // Also bump exec tool timeout c.tools = c.tools || {}; c.tools.exec = c.tools.exec || {}; c.tools.exec.timeoutSec = 900; process.stdout.write\\(JSON.stringify\\(c,null,2\\)\\); }\\)\")",
-      "Bash(grep -r \"rounded\\\\|px-\\\\|py-\\\\|gap-\" /home/julien/multi/components/ui/*.tsx)"
+      "Bash(grep -r \"rounded\\\\|px-\\\\|py-\\\\|gap-\" /home/julien/multi/components/ui/*.tsx)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)",
+      "Bash(gh auth:*)"
     ],
     "additionalDirectories": [
       "/home/julien/multi/app/api/openclaw/preview",

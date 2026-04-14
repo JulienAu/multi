@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
 import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
 import { join, extname, basename } from 'path'
@@ -22,12 +22,12 @@ const MIME_TYPES: Record<string, string> = {
 
 export async function GET(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
-    const instance = await getOpenClawInstance(userId)
+    const instance = await getOpenClawInstance(businessId)
     if (!instance) {
       return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
     }
@@ -99,12 +99,12 @@ const putSchema = z.object({
 
 export async function PUT(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
-    const instance = await getOpenClawInstance(userId)
+    const instance = await getOpenClawInstance(businessId)
     if (!instance) {
       return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
     }
@@ -132,12 +132,12 @@ const deleteSchema = z.object({
 
 export async function DELETE(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
-    const instance = await getOpenClawInstance(userId)
+    const instance = await getOpenClawInstance(businessId)
     if (!instance) {
       return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
     }

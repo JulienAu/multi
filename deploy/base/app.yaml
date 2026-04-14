@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-app
+  namespace: multi
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: multi-app
+  template:
+    metadata:
+      labels:
+        app: multi-app
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/OWNER/multi:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            # Synced from Doppler via `doppler-operator` (cf. docs/prod-setup.md).
+            - secretRef:
+                name: multi-app-secrets
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: ORCHESTRATOR_BACKEND
+              value: k3s
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /api/dashboard
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/dashboard
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+      imagePullSecrets:
+        - name: ghcr-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-app
+  namespace: multi
+spec:
+  type: ClusterIP
+  selector:
+    app: multi-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,22 +1,22 @@
 import { NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance, checkHealth } from '@/lib/openclaw/manager'
 
 export async function GET() {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
-    const instance = await getOpenClawInstance(userId)
+    const instance = await getOpenClawInstance(businessId)
     if (!instance) {
       return NextResponse.json({ provisioned: false, status: null })
     }
 
     let healthy = false
     if (instance.status === 'running') {
-      healthy = await checkHealth(userId)
+      healthy = await checkHealth(businessId)
     }
 
     return NextResponse.json({

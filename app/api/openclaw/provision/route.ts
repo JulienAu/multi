@@ -1,18 +1,15 @@
 import { NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { provisionOpenClaw, getOpenClawInstance } from '@/lib/openclaw/manager'
-import { db, openclawInstances } from '@/lib/db'
-import { eq } from 'drizzle-orm'
 
 export async function POST() {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
-    // Check if already running
-    const existing = await getOpenClawInstance(userId)
+    const existing = await getOpenClawInstance(businessId)
     if (existing?.status === 'running') {
       return NextResponse.json({ status: 'running', instanceId: existing.id })
     }
@@ -21,8 +18,7 @@ export async function POST() {
       return NextResponse.json({ status: 'provisioning', instanceId: existing.id })
     }
 
-    // Launch provisioning in background (takes 30-60s)
-    provisionOpenClaw(userId).catch(err => {
+    provisionOpenClaw(businessId).catch(err => {
       console.error('[openclaw/provision] background error:', err)
     })
 

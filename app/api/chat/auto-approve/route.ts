@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
 import { db, openclawInstances } from '@/lib/db'
 import { eq } from 'drizzle-orm'
@@ -12,20 +12,18 @@ const schema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const { enabled } = schema.parse(await req.json())
 
-    // Update DB flag
     await db.update(openclawInstances)
       .set({ autoApprove: enabled, updatedAt: new Date() })
-      .where(eq(openclawInstances.userId, userId))
+      .where(eq(openclawInstances.businessId, businessId))
 
-    // Update OpenClaw config directly
-    const instance = await getOpenClawInstance(userId)
+    const instance = await getOpenClawInstance(businessId)
     if (instance) {
       const configPath = `/tmp/openclaw-homes/${instance.containerName}/openclaw.json`
       try {
@@ -51,13 +49,13 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const instance = await db.query.openclawInstances.findFirst({
-      where: (o, { eq }) => eq(o.userId, userId),
+      where: (o, { eq }) => eq(o.businessId, businessId),
     })
 
     return NextResponse.json({ autoApprove: instance?.autoApprove ?? false })

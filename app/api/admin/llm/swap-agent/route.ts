@@ -1,19 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, AdminError } from '@/lib/admin'
 import { hotSwapAgentModel } from '@/lib/openclaw/manager'
-import { db, openclawInstances } from '@/lib/db'
-import { eq } from 'drizzle-orm'
+import { db } from '@/lib/db'
 import { z } from 'zod'
 
 const schema = z.object({
-  userId: z.string().min(1),
+  businessId: z.string().min(1),
   model: z.string().min(1),
 })
 
-/**
- * POST /api/admin/llm/swap-agent
- * Hot-swap the agent model on a user's running OpenClaw container.
- */
 export async function POST(req: NextRequest) {
   try {
     await requireAdmin()
@@ -25,12 +20,12 @@ export async function POST(req: NextRequest) {
   let body: z.infer<typeof schema>
   try {
     body = schema.parse(await req.json())
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: 'Donnees invalides' }, { status: 400 })
   }
 
   try {
-    await hotSwapAgentModel(body.userId, body.model)
+    await hotSwapAgentModel(body.businessId, body.model)
     return NextResponse.json({ status: 'swapped', model: body.model })
   } catch (e) {
     console.error('[admin/swap-agent]', e)
@@ -41,9 +36,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * GET /api/admin/llm/swap-agent — list all running agents with their current model
- */
 export async function GET() {
   try {
     await requireAdmin()
@@ -67,7 +59,7 @@ export async function GET() {
       } catch {}
 
       return {
-        userId: inst.userId,
+        businessId: inst.businessId,
         containerName: inst.containerName,
         port: inst.port,
         currentModel,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, businessDocs, businessDocVersions } from '@/lib/db'
-import { eq, and, desc } from 'drizzle-orm'
-import { getCurrentUserId } from '@/lib/auth'
+import { eq, and } from 'drizzle-orm'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { z } from 'zod'
 
 const updateSchema = z.object({
@@ -13,16 +13,16 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const { id } = await params
     const body = updateSchema.parse(await req.json())
 
     const existing = await db.query.businessDocs.findFirst({
-      where: (d, { eq, and }) => and(eq(d.id, id), eq(d.userId, userId)),
+      where: (d, { eq, and }) => and(eq(d.id, id), eq(d.businessId, businessId)),
     })
 
     if (!existing) {
@@ -50,7 +50,7 @@ export async function PUT(
         sectionCount: sections,
         updatedAt: new Date(),
       })
-      .where(and(eq(businessDocs.id, id), eq(businessDocs.userId, userId)))
+      .where(and(eq(businessDocs.id, id), eq(businessDocs.businessId, businessId)))
       .returning()
 
     return NextResponse.json({
@@ -71,9 +71,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const { id } = await params

@@ -1,13 +1,15 @@
 import { cookies } from 'next/headers'
 import { SignJWT, jwtVerify } from 'jose'
-import { db, users, wizardSessions, businessDocs, leads } from '@/lib/db'
-import { eq } from 'drizzle-orm'
+import { db, users, businesses, wizardSessions, businessDocs, leads } from '@/lib/db'
+import { eq, and } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'multi-dev-secret-change-in-prod'
-)
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET is required')
+}
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET)
 const COOKIE_NAME = 'multi_session'
+const BUSINESS_COOKIE = 'multi_business_id'
 
 // ─── JWT ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +45,7 @@ export async function setSession(userId: string) {
 export async function clearSession() {
   const cookieStore = await cookies()
   cookieStore.delete(COOKIE_NAME)
+  cookieStore.delete(BUSINESS_COOKIE)
 }
 
 export async function getCurrentUserId(): Promise<string | null> {
@@ -62,6 +65,63 @@ export async function getCurrentUser() {
   return user ?? null
 }
 
+// ─── BUSINESS CONTEXT ───────────────────────────────────────────────────────
+
+/**
+ * Retourne l'id du business actif pour le user courant.
+ * - Lit le cookie `multi_business_id` et valide l'ownership.
+ * - Fallback : premier business actif du user (le plus récent).
+ * - null si user anon ou pas de business.
+ * Ne modifie pas le cookie (pour être safe en server components).
+ */
+export async function getCurrentBusinessId(): Promise<string | null> {
+  const userId = await getCurrentUserId()
+  if (!userId) return null
+
+  const cookieStore = await cookies()
+  const cookieVal = cookieStore.get(BUSINESS_COOKIE)?.value
+
+  if (cookieVal) {
+    const owned = await db.query.businesses.findFirst({
+      where: (b, { eq, and }) => and(eq(b.id, cookieVal), eq(b.userId, userId)),
+      columns: { id: true },
+    })
+    if (owned) return owned.id
+  }
+
+  const first = await db.query.businesses.findFirst({
+    where: (b, { eq, and }) => and(eq(b.userId, userId), eq(b.status, 'active')),
+    orderBy: (b, { desc }) => [desc(b.createdAt)],
+    columns: { id: true },
+  })
+  return first?.id ?? null
+}
+
+export async function setCurrentBusinessId(businessId: string): Promise<boolean> {
+  const userId = await getCurrentUserId()
+  if (!userId) return false
+
+  const owned = await db.query.businesses.findFirst({
+    where: (b, { eq, and }) => and(eq(b.id, businessId), eq(b.userId, userId)),
+    columns: { id: true },
+  })
+  if (!owned) return false
+
+  const cookieStore = await cookies()
+  cookieStore.set(BUSINESS_COOKIE, businessId, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30,
+  })
+  return true
+}
+
+export async function clearBusinessCookie() {
+  const cookieStore = await cookies()
+  cookieStore.delete(BUSINESS_COOKIE)
+}
+
 // ─── AUTH ACTIONS ───────────────────────────────────────────────────────────
 
 export async function signUp(email: string, password: string, firstName?: string) {
@@ -79,47 +139,61 @@ export async function signUp(email: string, password: string, firstName?: string
     firstName: firstName ?? null,
   }).returning()
 
-  // Rattacher les données existantes (wizard sessions, business docs, leads) via l'email
-  await claimExistingData(user.id, email)
+  const businessId = await claimExistingData(user.id, email)
 
   await setSession(user.id)
+  if (businessId) {
+    const cookieStore = await cookies()
+    cookieStore.set(BUSINESS_COOKIE, businessId, {
+      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+    })
+  }
   return user
 }
 
 /**
- * Après inscription, rattache au nouveau user toutes les données
- * créées avant le compte (identifiées par email dans leads/wizard_sessions).
+ * Après inscription, rattache au nouveau user les données anon créées
+ * avant le compte (wizard sessions + leads, identifiés par email).
+ * Crée un business par wizard session trouvée.
+ * Retourne l'id du business créé le plus récemment (à utiliser comme business actif).
  */
-async function claimExistingData(userId: string, email: string) {
+async function claimExistingData(userId: string, email: string): Promise<string | null> {
+  let lastBusinessId: string | null = null
   try {
-    // Trouver les sessions wizard liées à cet email
     const sessionsWithEmail = await db.query.wizardSessions.findMany({
       where: (s, { eq }) => eq(s.email, email),
     })
 
-    const sessionIds = sessionsWithEmail.map(s => s.id)
-
-    // Rattacher les sessions au user et créer les business docs manquants
     for (const session of sessionsWithEmail) {
       await db.update(wizardSessions)
         .set({ userId, updatedAt: new Date() })
         .where(eq(wizardSessions.id, session.id))
 
-      // Rattacher les business docs existants
-      await db.update(businessDocs)
-        .set({ userId, updatedAt: new Date() })
-        .where(eq(businessDocs.sessionId, session.id))
+      const answers = session.answers as Record<string, unknown> | null
+      if (!answers) continue
 
-      // Si le business doc n'existe pas mais le contenu est dans la session, le créer
+      const [business] = await db.insert(businesses).values({
+        userId,
+        name: (answers.name as string) ?? 'Mon business',
+      }).returning()
+      lastBusinessId = business.id
+
+      await db.update(wizardSessions)
+        .set({ businessId: business.id })
+        .where(eq(wizardSessions.id, session.id))
+
       const existingDoc = await db.query.businessDocs.findFirst({
         where: (d, { eq }) => eq(d.sessionId, session.id),
       })
-      if (!existingDoc && session.answers) {
-        const answers = session.answers as Record<string, unknown>
+      if (existingDoc) {
+        await db.update(businessDocs)
+          .set({ businessId: business.id })
+          .where(eq(businessDocs.id, existingDoc.id))
+      } else {
         const content = answers._generatedContent as string | undefined
         if (content) {
           await db.insert(businessDocs).values({
-            userId,
+            businessId: business.id,
             sessionId: session.id,
             content,
             lineCount: content.split('\n').length,
@@ -132,13 +206,13 @@ async function claimExistingData(userId: string, email: string) {
       }
     }
 
-    // Rattacher les leads
     await db.update(leads)
       .set({ convertedToUserId: userId, convertedAt: new Date() })
       .where(eq(leads.email, email))
   } catch (error) {
     console.error('[auth/claimExistingData]', error)
   }
+  return lastBusinessId
 }
 
 export async function signIn(email: string, password: string) {
@@ -155,5 +229,18 @@ export async function signIn(email: string, password: string) {
   }
 
   await setSession(user.id)
+
+  const firstBusiness = await db.query.businesses.findFirst({
+    where: (b, { eq, and }) => and(eq(b.userId, user.id), eq(b.status, 'active')),
+    orderBy: (b, { desc }) => [desc(b.createdAt)],
+    columns: { id: true },
+  })
+  if (firstBusiness) {
+    const cookieStore = await cookies()
+    cookieStore.set(BUSINESS_COOKIE, firstBusiness.id, {
+      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+    })
+  }
+
   return user
 }

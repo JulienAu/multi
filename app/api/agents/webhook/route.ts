@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db, agentJobs, agentJobRuns, openclawInstances } from '@/lib/db'
-import { eq, and } from 'drizzle-orm'
+import { db, agentJobs, agentJobRuns } from '@/lib/db'
+import { eq } from 'drizzle-orm'
 
-const WEBHOOK_SECRET = process.env.OPENCLAW_WEBHOOK_SECRET || 'multi-cron-webhook-secret'
+if (!process.env.OPENCLAW_WEBHOOK_SECRET) {
+  throw new Error('OPENCLAW_WEBHOOK_SECRET is required')
+}
+const WEBHOOK_SECRET = process.env.OPENCLAW_WEBHOOK_SECRET
 
 /**
  * POST /api/agents/webhook
  * Called by OpenClaw after each cron job run.
  */
 export async function POST(req: NextRequest) {
-  // Verify webhook token
   const authHeader = req.headers.get('authorization')
   const token = authHeader?.replace('Bearer ', '') ?? req.headers.get('x-webhook-token') ?? ''
   if (token !== WEBHOOK_SECRET) {
@@ -21,7 +23,6 @@ export async function POST(req: NextRequest) {
   console.log('[agents/webhook] received:', JSON.stringify(payload).slice(0, 500))
 
   try {
-    // Extract job info from the payload
     const jobName = payload.jobName ?? payload.name ?? payload.job?.name ?? ''
     const output = payload.output ?? payload.result ?? payload.message ?? payload.content ?? ''
     const status = payload.status ?? (payload.error ? 'failed' : 'completed')
@@ -31,27 +32,25 @@ export async function POST(req: NextRequest) {
       console.log('[agents/webhook] no job name in payload, storing raw')
     }
 
-    // Find the user by container name or iterate all instances
-    let userId: string | null = null
+    let businessId: string | null = null
     if (containerName) {
       const instance = await db.query.openclawInstances.findFirst({
         where: (o, { eq }) => eq(o.containerName, containerName),
-        columns: { userId: true },
+        columns: { businessId: true },
       })
-      userId = instance?.userId ?? null
+      businessId = instance?.businessId ?? null
     }
 
-    // Try to match the job by name
-    if (jobName && userId) {
+    if (jobName && businessId) {
       const job = await db.query.agentJobs.findFirst({
-        where: (j, { eq, and }) => and(eq(j.userId, userId!), eq(j.name, jobName)),
+        where: (j, { eq, and }) => and(eq(j.businessId, businessId!), eq(j.name, jobName)),
       })
 
       if (job) {
         const finalStatus = job.requiresApproval ? 'pending_approval' : 'completed'
         await db.insert(agentJobRuns).values({
           jobId: job.id,
-          userId: userId!,
+          businessId: businessId!,
           status: status === 'failed' ? 'failed' : finalStatus,
           output: typeof output === 'string' ? output : JSON.stringify(output),
           completedAt: new Date(),
@@ -66,9 +65,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // If no matching job found, log for debugging
-    console.log(`[agents/webhook] no matching job for name="${jobName}" userId="${userId}"`)
-    return NextResponse.json({ status: 'no_match', jobName, userId })
+    console.log(`[agents/webhook] no matching job for name="${jobName}" businessId="${businessId}"`)
+    return NextResponse.json({ status: 'no_match', jobName, businessId })
   } catch (e) {
     console.error('[agents/webhook] error:', e)
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })

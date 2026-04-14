@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, actionValidations } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { z } from 'zod'
 
 const schema = z.object({
@@ -11,9 +11,9 @@ const schema = z.object({
 
 export async function PATCH(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const body = schema.parse(await req.json())
@@ -26,7 +26,7 @@ export async function PATCH(req: NextRequest) {
       .where(
         and(
           eq(actionValidations.id, body.actionId),
-          eq(actionValidations.userId, userId),
+          eq(actionValidations.businessId, businessId),
         )
       )
       .returning()

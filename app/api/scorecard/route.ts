@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, ars } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { z } from 'zod'
 
 export interface ScorecardData {
@@ -22,13 +22,13 @@ const DEFAULT_SCORECARD: ScorecardData = {
 
 export async function GET() {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const activeArs = await db.query.ars.findFirst({
-      where: (a, { eq, and }) => and(eq(a.userId, userId), eq(a.status, 'active')),
+      where: (a, { eq, and }) => and(eq(a.businessId, businessId), eq(a.status, 'active')),
     })
 
     if (!activeArs) {
@@ -62,9 +62,9 @@ const updateSchema = z.object({
 
 export async function PUT(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const body = updateSchema.parse(await req.json())
@@ -74,7 +74,7 @@ export async function PUT(req: NextRequest) {
         scorecardData: body.scorecard,
         updatedAt: new Date(),
       })
-      .where(and(eq(ars.id, body.arsId), eq(ars.userId, userId)))
+      .where(and(eq(ars.id, body.arsId), eq(ars.businessId, businessId)))
       .returning()
 
     if (!updated) {

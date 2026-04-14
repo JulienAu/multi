@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
-import { db, agentJobs, agentJobRuns } from '@/lib/db'
+import { getCurrentBusinessId } from '@/lib/auth'
+import { db, agentJobs } from '@/lib/db'
 import { AGENT_TEMPLATES } from '@/lib/agents/templates'
 import { registerCronJob } from '@/lib/agents/cron-manager'
 import { z } from 'zod'
 
 /**
- * GET /api/agents — list user's agent jobs + last run per job
+ * GET /api/agents — list business's agent jobs + last run per job
  */
 export async function GET() {
-  const userId = await getCurrentUserId()
-  if (!userId) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 })
+  const businessId = await getCurrentBusinessId()
+  if (!businessId) return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
 
   const jobs = await db.query.agentJobs.findMany({
-    where: (j, { eq }) => eq(j.userId, userId),
+    where: (j, { eq }) => eq(j.businessId, businessId),
     orderBy: (j, { desc }) => [desc(j.createdAt)],
   })
 
@@ -45,8 +45,8 @@ const createSchema = z.object({
  * POST /api/agents — create an agent job
  */
 export async function POST(req: NextRequest) {
-  const userId = await getCurrentUserId()
-  if (!userId) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 })
+  const businessId = await getCurrentBusinessId()
+  if (!businessId) return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
 
   const body = createSchema.parse(await req.json())
 
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
   }
 
   const [job] = await db.insert(agentJobs).values({
-    userId,
+    businessId,
     name: body.name,
     icon,
     description: body.description,
@@ -69,8 +69,7 @@ export async function POST(req: NextRequest) {
     status: 'active',
   }).returning()
 
-  // Register cron in OpenClaw (best effort — agent must be deployed)
-  registerCronJob(userId, {
+  registerCronJob(businessId, {
     name: body.name,
     message: body.description.slice(0, 500),
     cron: body.schedule,

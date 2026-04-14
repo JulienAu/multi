@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: multi-staging
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: Namespace
+      name: multi
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: multi-staging
+  - target:
+      kind: Deployment
+      name: multi-app
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Ingress
+      name: multi-app
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: staging.mymulti.io
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: staging-mymulti-io-tls
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging.mymulti.io
+
+images:
+  - name: ghcr.io/OWNER/multi
+    newTag: staging

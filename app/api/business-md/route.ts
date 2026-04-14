@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server'
 import { db, businessDocs } from '@/lib/db'
 import { desc } from 'drizzle-orm'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 
 export async function GET() {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
       return NextResponse.json({ content: null })
     }
 
     const doc = await db.query.businessDocs.findFirst({
-      where: (d, { eq }) => eq(d.userId, userId),
+      where: (d, { eq }) => eq(d.businessId, businessId),
       orderBy: [desc(businessDocs.createdAt)],
     })
 

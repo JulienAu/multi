@@ -23,7 +23,8 @@ interface DashboardAction {
 }
 
 interface DashboardSummary {
-  user: { plan: string | null; email: string; firstName: string | null } | null
+  user: { email: string; firstName: string | null } | null
+  business: { id: string; name: string; plan: string | null } | null
   ars: { id: string; name: string; status: string; lastNightlyCycleAt: string | null } | null
   businessName: string | null
   sector: string | null
@@ -195,7 +196,7 @@ export default function DashboardPage() {
           briefing={data?.briefing ?? null}
           arsName={data?.ars?.name ?? data?.businessName ?? null}
           arsStatus={data?.ars?.status ?? null}
-          plan={data?.user?.plan ?? null}
+          plan={data?.business?.plan ?? null}
         />
       </aside>
     </div>

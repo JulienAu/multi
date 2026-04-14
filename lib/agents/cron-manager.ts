@@ -11,12 +11,11 @@ import { sendToOpenClaw, getOpenClawInstance } from '@/lib/openclaw/manager'
  * Execute an agent job immediately: send the prompt to OpenClaw and save the result.
  */
 export async function executeAgentJob(job: typeof agentJobs.$inferSelect): Promise<string> {
-  const instance = await getOpenClawInstance(job.userId)
+  const instance = await getOpenClawInstance(job.businessId)
   if (!instance || instance.status !== 'running') throw new Error('Agent non deploye')
 
-  // Get BUSINESS.md for context
   const doc = await db.query.businessDocs.findFirst({
-    where: (d, { eq }) => eq(d.userId, job.userId),
+    where: (d, { eq }) => eq(d.businessId, job.businessId),
     orderBy: [desc(businessDocs.createdAt)],
     columns: { content: true },
   })
@@ -27,10 +26,9 @@ export async function executeAgentJob(job: typeof agentJobs.$inferSelect): Promi
 
   const fullPrompt = `${job.description}${businessContext}`
 
-  // Create run in DB
   const [run] = await db.insert(agentJobRuns).values({
     jobId: job.id,
-    userId: job.userId,
+    businessId: job.businessId,
     status: 'running',
   }).returning()
 
@@ -61,10 +59,10 @@ export async function executeAgentJob(job: typeof agentJobs.$inferSelect): Promi
  * Register a cron job inside the OpenClaw container by asking the agent.
  */
 export async function registerCronJob(
-  userId: string,
+  businessId: string,
   opts: { name: string; message: string; cron: string; timezone: string },
 ): Promise<void> {
-  const instance = await getOpenClawInstance(userId)
+  const instance = await getOpenClawInstance(businessId)
   if (!instance || instance.status !== 'running') throw new Error('Agent non deploye')
 
   const escapedName = opts.name.replace(/'/g, "'\\''")
@@ -81,8 +79,8 @@ export async function registerCronJob(
 /**
  * Remove a cron job from OpenClaw by asking the agent.
  */
-export async function removeCronJob(userId: string, jobName: string): Promise<void> {
-  const instance = await getOpenClawInstance(userId)
+export async function removeCronJob(businessId: string, jobName: string): Promise<void> {
+  const instance = await getOpenClawInstance(businessId)
   if (!instance || instance.status !== 'running') return
 
   const escapedName = jobName.replace(/'/g, "'\\''")

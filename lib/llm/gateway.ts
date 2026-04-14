@@ -1,7 +1,7 @@
-// LLM Gateway — proxy all OpenRouter calls through per-user model resolution,
+// LLM Gateway — proxy all OpenRouter calls through per-business model resolution,
 // rate limiting, and usage tracking.
 
-import { db, modelConfigs, llmUsage, users } from '@/lib/db'
+import { db, modelConfigs, llmUsage, businesses } from '@/lib/db'
 import { eq, and, sql, gte } from 'drizzle-orm'
 import { callLLM, MODELS, type OpenRouterRequest, type OpenRouterResponse } from './client'
 import type { ModelConfig } from '@/lib/db/schema'
@@ -30,7 +30,7 @@ const DEFAULT_MODELS: Record<string, Record<LlmPurpose, string>> = {
   },
 }
 
-// Fallback for users with no plan
+// Fallback for businesses with no plan (pre-subscription)
 const NO_PLAN_MODELS: Record<LlmPurpose, string> = {
   generation: MODELS.LIGHT,
   light:      MODELS.LIGHT,
@@ -39,22 +39,20 @@ const NO_PLAN_MODELS: Record<LlmPurpose, string> = {
 }
 
 /**
- * Resolve which model a user should use for a given purpose.
+ * Resolve which model a business should use for a given purpose.
  * Priority: modelConfigs table > DEFAULT_MODELS > env vars.
  */
 export async function resolveModel(
-  userId: string,
+  businessId: string,
   purpose: LlmPurpose,
 ): Promise<{ model: string; config: ModelConfig | null }> {
-  // Get user plan
-  const user = await db.query.users.findFirst({
-    where: (u, { eq }) => eq(u.id, userId),
+  const business = await db.query.businesses.findFirst({
+    where: (b, { eq }) => eq(b.id, businessId),
     columns: { plan: true },
   })
 
-  const plan = user?.plan ?? null
+  const plan = business?.plan ?? null
 
-  // Try to find an active config row
   if (plan) {
     const config = await db.query.modelConfigs.findFirst({
       where: (c, { eq, and }) => and(
@@ -69,22 +67,18 @@ export async function resolveModel(
     }
   }
 
-  // Fallback to defaults
   const planModels = plan ? (DEFAULT_MODELS[plan] ?? NO_PLAN_MODELS) : NO_PLAN_MODELS
   return { model: planModels[purpose], config: null }
 }
 
 /**
- * Check if user has exceeded their daily token limit.
- * Returns { allowed, used, limit }.
+ * Check if business has exceeded its daily token limit.
  */
 export async function checkRateLimit(
-  userId: string,
+  businessId: string,
   config: ModelConfig | null,
 ): Promise<{ allowed: boolean; used: number; limit: number | null }> {
   const limit = config?.maxTokensPerDay ?? null
-
-  // No limit configured = unlimited
   if (!limit) return { allowed: true, used: 0, limit: null }
 
   const todayStart = new Date()
@@ -97,7 +91,7 @@ export async function checkRateLimit(
     .from(llmUsage)
     .where(
       and(
-        eq(llmUsage.userId, userId),
+        eq(llmUsage.businessId, businessId),
         gte(llmUsage.createdAt, todayStart),
       ),
     )
@@ -110,13 +104,13 @@ export async function checkRateLimit(
  * Log usage after a successful LLM call.
  */
 export async function logUsage(
-  userId: string,
+  businessId: string,
   model: string,
   endpoint: string,
   usage: { prompt_tokens: number; completion_tokens: number },
 ): Promise<void> {
   await db.insert(llmUsage).values({
-    userId,
+    businessId,
     model,
     promptTokens: usage.prompt_tokens,
     completionTokens: usage.completion_tokens,
@@ -126,24 +120,23 @@ export async function logUsage(
 
 /**
  * Gateway: the single entry point for all LLM calls.
- * Resolves model per user plan, checks rate limits, calls OpenRouter, logs usage.
+ * Resolves model per business plan, checks rate limits, calls OpenRouter, logs usage.
+ * Pass businessId === 'anonymous' to skip plan resolution + tracking (pre-auth wizard).
  */
 export async function llmGateway(
-  userId: string,
+  businessId: string,
   purpose: LlmPurpose,
   endpoint: string,
   request: Omit<OpenRouterRequest, 'model'>,
 ): Promise<OpenRouterResponse> {
-  const isAnonymous = userId === 'anonymous'
+  const isAnonymous = businessId === 'anonymous'
 
-  // 1. Resolve model
   const { model, config } = isAnonymous
     ? { model: NO_PLAN_MODELS[purpose], config: null }
-    : await resolveModel(userId, purpose)
+    : await resolveModel(businessId, purpose)
 
-  // 2. Check rate limit (skip for anonymous)
   if (!isAnonymous) {
-    const rateLimit = await checkRateLimit(userId, config)
+    const rateLimit = await checkRateLimit(businessId, config)
     if (!rateLimit.allowed) {
       throw new LlmRateLimitError(
         `Limite quotidienne atteinte (${rateLimit.used}/${rateLimit.limit} tokens). Réessayez demain.`,
@@ -153,12 +146,10 @@ export async function llmGateway(
     }
   }
 
-  // 3. Call OpenRouter
   const response = await callLLM({ ...request, model })
 
-  // 4. Log usage (fire and forget, skip for anonymous)
   if (response.usage && !isAnonymous) {
-    logUsage(userId, model, endpoint, response.usage).catch(console.error)
+    logUsage(businessId, model, endpoint, response.usage).catch(console.error)
   }
 
   return response
@@ -176,10 +167,10 @@ export class LlmRateLimitError extends Error {
 }
 
 /**
- * Resolve the OpenClaw agent model for a user's plan.
+ * Resolve the OpenClaw agent model for a business's plan.
  * Used at container provisioning time.
  */
-export async function resolveOpenClawModel(userId: string): Promise<string> {
-  const { model } = await resolveModel(userId, 'agent')
+export async function resolveOpenClawModel(businessId: string): Promise<string> {
+  const { model } = await resolveModel(businessId, 'agent')
   return model
 }

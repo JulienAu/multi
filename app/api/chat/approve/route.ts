@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { sessionManager } from '@/lib/openclaw/session-manager'
 import { z } from 'zod'
 
@@ -10,13 +10,13 @@ const schema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const body = schema.parse(await req.json())
-    await sessionManager.resolveApproval(userId, body.openclawId, body.decision)
+    await sessionManager.resolveApproval(businessId, body.openclawId, body.decision)
 
     return NextResponse.json({ ok: true })
   } catch (error) {

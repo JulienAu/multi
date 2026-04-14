@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db, ars, actionValidations, businessDocs } from '@/lib/db'
-import { desc, eq, and, gte } from 'drizzle-orm'
-import { getCurrentUserId } from '@/lib/auth'
+import { db, actionValidations, businessDocs } from '@/lib/db'
+import { desc } from 'drizzle-orm'
+import { getCurrentUserId, getCurrentBusinessId } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
   try {
     const userId = await getCurrentUserId()
-    if (!userId) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!userId || !businessId) {
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
     }
 
     const period = req.nextUrl.searchParams.get('period') ?? 'today'
@@ -23,16 +24,19 @@ export async function GET(req: NextRequest) {
       where: (u, { eq }) => eq(u.id, userId),
     })
 
+    const business = await db.query.businesses.findFirst({
+      where: (b, { eq }) => eq(b.id, businessId),
+    })
+
     const activeArs = await db.query.ars.findFirst({
-      where: (a, { eq, and }) => and(eq(a.userId, userId), eq(a.status, 'active')),
+      where: (a, { eq, and }) => and(eq(a.businessId, businessId), eq(a.status, 'active')),
     })
 
     const latestDoc = await db.query.businessDocs.findFirst({
-      where: (d, { eq }) => eq(d.userId, userId),
+      where: (d, { eq }) => eq(d.businessId, businessId),
       orderBy: [desc(businessDocs.createdAt)],
     })
 
-    // Actions récentes
     let actions: typeof actionValidations.$inferSelect[] = []
     if (activeArs) {
       actions = await db.query.actionValidations.findMany({
@@ -45,7 +49,6 @@ export async function GET(req: NextRequest) {
       })
     }
 
-    // Métriques VALUE mockées (seront alimentées par les agents à partir du Lot 10+)
     const scorecardData = (activeArs?.scorecardData as Record<string, number> | null) ?? null
     const metrics = {
       revenue:      { value: scorecardData?.revenue ?? 0,      variation: '+12%', trend: 'up' as const },
@@ -55,7 +58,8 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      user: user ? { plan: user.plan, email: user.email, firstName: user.firstName } : null,
+      user: user ? { email: user.email, firstName: user.firstName } : null,
+      business: business ? { id: business.id, name: business.name, plan: business.plan } : null,
       ars: activeArs ? {
         id: activeArs.id,
         name: activeArs.name,
@@ -73,7 +77,7 @@ export async function GET(req: NextRequest) {
         agentSource: a.agentSource,
         createdAt: a.createdAt.toISOString(),
       })),
-      briefing: null, // Sera alimenté par le cycle nocturne (Lot 11)
+      briefing: null,
     })
   } catch (error) {
     console.error('[dashboard/summary]', error)

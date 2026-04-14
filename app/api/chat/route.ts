@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentUserId } from '@/lib/auth'
+import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '@/lib/openclaw/manager'
 import { sessionManager } from '@/lib/openclaw/session-manager'
 import { llmGateway } from '@/lib/llm/gateway'
@@ -16,19 +16,19 @@ const sendSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    const maybeUserId = await getCurrentUserId()
-    if (!maybeUserId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
-    const userId: string = maybeUserId
+    const maybeBusinessId = await getCurrentBusinessId()
+    if (!maybeBusinessId) return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
+    const businessId: string = maybeBusinessId
 
     const { message, conversationId, images } = sendSchema.parse(await req.json())
 
-    const instance = await getOpenClawInstance(userId)
+    const instance = await getOpenClawInstance(businessId)
     if (!instance || instance.status !== 'running') {
       return NextResponse.json({ error: 'Agent non déployé.' }, { status: 400 })
     }
 
     // Save user message
-    await db.insert(chatMessages).values({ userId, conversationId, role: 'user', content: message })
+    await db.insert(chatMessages).values({ businessId, conversationId, role: 'user', content: message })
 
     // Auto-title on first message
     const conv = await db.query.conversations.findFirst({
@@ -38,21 +38,18 @@ export async function POST(req: NextRequest) {
       .set({ lastMessageAt: new Date() })
       .where(eq(conversations.id, conversationId))
     if (conv?.title === 'Nouvelle conversation') {
-      generateConversationTitle(conversationId, message, userId).catch(console.error)
+      generateConversationTitle(conversationId, message, businessId).catch(console.error)
     }
 
     const hasImages = images && images.length > 0
 
-    // For messages with images: use HTTP multimodal endpoint
-    // For text-only: use WebSocket (full agent mode with tool loop)
     if (hasImages) {
-      return handleMultimodalChat(userId, conversationId, message, images!, instance)
+      return handleMultimodalChat(businessId, conversationId, message, images!, instance)
     }
 
-    // Connect via WebSocket (full agent mode with tool loop)
     let session
     try {
-      session = await sessionManager.getSession(userId)
+      session = await sessionManager.getSession(businessId)
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : 'Cannot connect to agent' }, { status: 500 })
     }
@@ -84,13 +81,12 @@ export async function POST(req: NextRequest) {
       const cleaned = buildDbContent()
       if (cleaned) {
         db.insert(chatMessages).values({
-          userId, conversationId, role: 'assistant', content: cleaned,
+          businessId, conversationId, role: 'assistant', content: cleaned,
         }).catch(console.error)
       }
     }
 
-    // Background listener — keeps running even if client disconnects
-    const removeListener = sessionManager.addListener(userId, (event: OpenClawEvent) => {
+    const removeListener = sessionManager.addListener(businessId, (event: OpenClawEvent) => {
       try {
         switch (event.type) {
           case 'chat.delta': {
@@ -170,8 +166,7 @@ export async function POST(req: NextRequest) {
       } catch { clientClosed = true }
     })
 
-    // Send message via WebSocket (triggers full agent loop)
-    sessionManager.sendMessage(userId, message).catch((err) => {
+    sessionManager.sendMessage(businessId, message).catch((err) => {
       if (!clientClosed) {
         try { streamController?.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`)) } catch {}
       }
@@ -225,14 +220,14 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const userId = await getCurrentUserId()
-    if (!userId) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    const businessId = await getCurrentBusinessId()
+    if (!businessId) return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
 
     const conversationId = req.nextUrl.searchParams.get('conversationId')
     if (!conversationId) return NextResponse.json({ error: 'conversationId required' }, { status: 400 })
 
     const messages = await db.query.chatMessages.findMany({
-      where: (m, { eq, and }) => and(eq(m.userId, userId), eq(m.conversationId, conversationId)),
+      where: (m, { eq, and }) => and(eq(m.businessId, businessId), eq(m.conversationId, conversationId)),
       orderBy: (m, { desc }) => [desc(m.createdAt)],
       limit: 50,
     })
@@ -253,7 +248,7 @@ export async function GET(req: NextRequest) {
  * Uses OpenAI-compatible /v1/chat/completions with content blocks.
  */
 async function handleMultimodalChat(
-  userId: string,
+  businessId: string,
   conversationId: string,
   message: string,
   imageDataUrls: string[],
@@ -267,9 +262,8 @@ async function handleMultimodalChat(
     contentBlocks.push({ type: 'image_url', image_url: { url: dataUrl } })
   }
 
-  // Load history (text only for previous messages)
   const history = await db.query.chatMessages.findMany({
-    where: (m, { eq, and }) => and(eq(m.userId, userId), eq(m.conversationId, conversationId)),
+    where: (m, { eq, and }) => and(eq(m.businessId, businessId), eq(m.conversationId, conversationId)),
     orderBy: (m, { desc }) => [desc(m.createdAt)],
     limit: 10,
   })
@@ -323,7 +317,7 @@ async function handleMultimodalChat(
           try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`)); controller.close() } catch {}
         }
         if (fullContent) {
-          await db.insert(chatMessages).values({ userId, conversationId, role: 'assistant', content: fullContent }).catch(console.error)
+          await db.insert(chatMessages).values({ businessId, conversationId, role: 'assistant', content: fullContent }).catch(console.error)
         }
       }
     },
@@ -335,9 +329,9 @@ async function handleMultimodalChat(
   })
 }
 
-async function generateConversationTitle(conversationId: string, firstMessage: string, userId: string) {
+async function generateConversationTitle(conversationId: string, firstMessage: string, businessId: string) {
   try {
-    const response = await llmGateway(userId, 'light', 'auto-title', {
+    const response = await llmGateway(businessId, 'light', 'auto-title', {
       max_tokens: 30,
       temperature: 0.3,
       messages: [{

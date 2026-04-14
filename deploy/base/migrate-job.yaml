@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: multi-migrate
+  namespace: multi
+  annotations:
+    # Kustomize regenerates the job name with a hash on each apply (see kustomization.yaml
+    # `generatorOptions` in overlays) so each deploy creates a new Job.
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/OWNER/multi:latest
+          command: ["node", "node_modules/drizzle-kit/bin.cjs", "migrate"]
+          envFrom:
+            - secretRef:
+                name: multi-app-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      imagePullSecrets:
+        - name: ghcr-credentials

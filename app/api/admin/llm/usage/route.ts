@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, AdminError } from '@/lib/admin'
-import { db, llmUsage, users } from '@/lib/db'
-import { eq, desc, gte, and, sql } from 'drizzle-orm'
+import { db, llmUsage, businesses, users } from '@/lib/db'
+import { eq, gte, and, sql } from 'drizzle-orm'
 
 /**
  * GET /api/admin/llm/usage
  * Query params:
  *   - days: number of days to look back (default 7)
- *   - userId: filter by specific user
- *   - groupBy: 'user' | 'model' | 'endpoint' | 'day' (default 'user')
+ *   - businessId: filter by specific business
+ *   - groupBy: 'business' | 'model' | 'endpoint' | 'day' (default 'business')
  */
 export async function GET(req: NextRequest) {
   try {
@@ -20,30 +20,31 @@ export async function GET(req: NextRequest) {
 
   const params = req.nextUrl.searchParams
   const days = Math.min(Number(params.get('days') || 7), 90)
-  const filterUserId = params.get('userId')
-  const groupBy = params.get('groupBy') || 'user'
+  const filterBusinessId = params.get('businessId')
+  const groupBy = params.get('groupBy') || 'business'
 
   const since = new Date()
   since.setDate(since.getDate() - days)
 
   const conditions = [gte(llmUsage.createdAt, since)]
-  if (filterUserId) conditions.push(eq(llmUsage.userId, filterUserId))
+  if (filterBusinessId) conditions.push(eq(llmUsage.businessId, filterBusinessId))
 
-  if (groupBy === 'user') {
+  if (groupBy === 'business') {
     const rows = await db
       .select({
-        userId: llmUsage.userId,
-        email: users.email,
-        firstName: users.firstName,
-        plan: users.plan,
+        businessId: llmUsage.businessId,
+        businessName: businesses.name,
+        ownerEmail: users.email,
+        plan: businesses.plan,
         totalPromptTokens: sql<number>`SUM(${llmUsage.promptTokens})`,
         totalCompletionTokens: sql<number>`SUM(${llmUsage.completionTokens})`,
         totalCalls: sql<number>`COUNT(*)`,
       })
       .from(llmUsage)
-      .innerJoin(users, eq(llmUsage.userId, users.id))
+      .innerJoin(businesses, eq(llmUsage.businessId, businesses.id))
+      .innerJoin(users, eq(businesses.userId, users.id))
       .where(and(...conditions))
-      .groupBy(llmUsage.userId, users.email, users.firstName, users.plan)
+      .groupBy(llmUsage.businessId, businesses.name, users.email, businesses.plan)
       .orderBy(sql`SUM(${llmUsage.promptTokens} + ${llmUsage.completionTokens}) DESC`)
       .limit(100)
 

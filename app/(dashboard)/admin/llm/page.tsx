@@ -2,12 +2,12 @@
 
 import { useEffect, useState, useCallback } from 'react'
 
-type GroupBy = 'user' | 'model' | 'endpoint' | 'day'
+type GroupBy = 'business' | 'model' | 'endpoint' | 'day'
 
 interface UsageRow {
-  userId?: string
-  email?: string
-  firstName?: string
+  businessId?: string
+  businessName?: string
+  ownerEmail?: string
   plan?: string
   model?: string
   endpoint?: string
@@ -28,7 +28,7 @@ interface ModelConfig {
 }
 
 interface AgentInstance {
-  userId: string
+  businessId: string
   containerName: string
   port: number
   currentModel: string
@@ -41,7 +41,7 @@ export default function AdminLlmPage() {
   const [usageData, setUsageData] = useState<UsageRow[]>([])
   const [configs, setConfigs] = useState<ModelConfig[]>([])
   const [agents, setAgents] = useState<AgentInstance[]>([])
-  const [groupBy, setGroupBy] = useState<GroupBy>('user')
+  const [groupBy, setGroupBy] = useState<GroupBy>('business')
   const [days, setDays] = useState(7)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -64,19 +64,18 @@ export default function AdminLlmPage() {
     } catch {}
   }, [])
 
-  const handleSwapModel = async (userId: string) => {
-    const model = swapModels[userId]
+  const handleSwapModel = async (businessId: string) => {
+    const model = swapModels[businessId]
     if (!model) return
-    setSwapping(userId)
+    setSwapping(businessId)
     try {
       const res = await fetch('/api/admin/llm/swap-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, model }),
+        body: JSON.stringify({ businessId, model }),
       })
       if (res.ok) {
-        setSwapModels(prev => ({ ...prev, [userId]: '' }))
-        // Refresh after restart delay
+        setSwapModels(prev => ({ ...prev, [businessId]: '' }))
         setTimeout(fetchAgents, 5000)
       }
     } finally { setSwapping(null) }
@@ -201,7 +200,7 @@ export default function AdminLlmPage() {
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="border-b border-ui-border text-left text-ui-text-secondary">
-                  {groupBy === 'user' && <><th className="py-2 pr-4">Utilisateur</th><th className="py-2 pr-4">Plan</th></>}
+                  {groupBy === 'business' && <><th className="py-2 pr-4">Business</th><th className="py-2 pr-4">Plan</th></>}
                   {groupBy === 'model' && <th className="py-2 pr-4">Modele</th>}
                   {groupBy === 'endpoint' && <th className="py-2 pr-4">Endpoint</th>}
                   {groupBy === 'day' && <th className="py-2 pr-4">Date</th>}
@@ -214,9 +213,9 @@ export default function AdminLlmPage() {
               <tbody>
                 {usageData.map((row, i) => (
                   <tr key={i} className="border-b border-ui-border hover:bg-ui-bg-secondary">
-                    {groupBy === 'user' && (
+                    {groupBy === 'business' && (
                       <>
-                        <td className="py-2 pr-4 text-ui-text-primary">{row.firstName || row.email}</td>
+                        <td className="py-2 pr-4 text-ui-text-primary">{row.businessName ?? row.ownerEmail ?? '-'}</td>
                         <td className="py-2 pr-4">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                             row.plan === 'business' ? 'bg-brand-violet-light text-brand-violet-dark' :
@@ -352,24 +351,24 @@ export default function AdminLlmPage() {
               </thead>
               <tbody>
                 {agents.map(agent => (
-                  <tr key={agent.userId} className="border-b border-ui-border">
+                  <tr key={agent.businessId} className="border-b border-ui-border">
                     <td className="py-2 pr-4 font-mono text-xs text-ui-text-primary">{agent.containerName}</td>
                     <td className="py-2 pr-4 tabular-nums text-ui-text-primary">{agent.port}</td>
                     <td className="py-2 pr-4 font-mono text-xs text-ui-text-primary">{agent.currentModel}</td>
                     <td className="py-2">
                       <div className="flex items-center gap-2">
                         <input
-                          value={swapModels[agent.userId] ?? ''}
-                          onChange={e => setSwapModels(prev => ({ ...prev, [agent.userId]: e.target.value }))}
+                          value={swapModels[agent.businessId] ?? ''}
+                          onChange={e => setSwapModels(prev => ({ ...prev, [agent.businessId]: e.target.value }))}
                           placeholder="nouveau modele"
                           className="flex-1 rounded-lg border border-ui-border bg-white px-3 py-1.5 text-sm font-mono text-ui-text-primary placeholder:text-ui-text-tertiary"
                         />
                         <button
-                          onClick={() => handleSwapModel(agent.userId)}
-                          disabled={!swapModels[agent.userId] || swapping === agent.userId}
+                          onClick={() => handleSwapModel(agent.businessId)}
+                          disabled={!swapModels[agent.businessId] || swapping === agent.businessId}
                           className="bg-brand-green hover:bg-brand-green-dark disabled:opacity-50 text-white px-3 py-1.5 rounded text-sm font-medium whitespace-nowrap"
                         >
-                          {swapping === agent.userId ? 'Swap...' : 'Swap'}
+                          {swapping === agent.businessId ? 'Swap...' : 'Swap'}
                         </button>
                       </div>
                     </td>

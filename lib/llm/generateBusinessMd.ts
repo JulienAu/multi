@@ -3,9 +3,9 @@ import type { WizardAnswers } from '@/lib/types'
 
 export async function generateBusinessMd(
   answers: WizardAnswers,
-  userId: string,
+  businessId: string,
 ): Promise<{ content: string; model: string }> {
-  const response = await llmGateway(userId, 'generation', 'business-md', {
+  const response = await llmGateway(businessId, 'generation', 'business-md', {
     max_tokens: 16384,
     messages: [
       {
