@@ -90,7 +90,7 @@ jobs:
         run: |
           SHA=${GITHUB_SHA}
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          kustomize edit set image ghcr.io/OWNER/multi=ghcr.io/${OWNER}/${{ github.event.repository.name }}:${SHA}
+          kustomize edit set image ghcr.io/${OWNER}/multi=ghcr.io/${OWNER}/${{ github.event.repository.name }}:${SHA}
 
       - name: Delete old migrate job
         run: |
