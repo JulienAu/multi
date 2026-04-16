@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { stripe } from '@/lib/stripe/client'
+import { getStripe } from '@/lib/stripe/client'
 import { z } from 'zod'
 
 const schema = z.object({
@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   try {
     const { priceId, email } = schema.parse(await req.json())
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripe().checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],

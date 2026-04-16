@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { stripe } from '@/lib/stripe/client'
+import { getStripe } from '@/lib/stripe/client'
 import { getCurrentUser } from '@/lib/auth'
 
 export async function POST() {
@@ -13,7 +13,7 @@ export async function POST() {
       return NextResponse.json({ error: 'Aucun abonnement Stripe' }, { status: 400 })
     }
 
-    const session = await stripe.billingPortal.sessions.create({
+    const session = await getStripe().billingPortal.sessions.create({
       customer: user.stripeCustomerId,
       return_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
     })
