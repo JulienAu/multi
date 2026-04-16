@@ -8,5 +8,5 @@ resources:
 
 # Image tag replaced by the CI/CD (deploy workflow).
 images:
-  - name: ghcr.io/OWNER/multi
+  - name: ghcr.io/julienau/multi
     newTag: latest

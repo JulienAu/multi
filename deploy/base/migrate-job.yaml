@@ -15,7 +15,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          image: ghcr.io/OWNER/multi:latest
+          image: ghcr.io/julienau/multi:latest
           command: ["node", "node_modules/drizzle-kit/bin.cjs", "migrate"]
           envFrom:
             - secretRef:

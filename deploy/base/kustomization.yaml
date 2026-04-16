@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - postgres.yaml
   - app.yaml
   - ingress.yaml
   - migrate-job.yaml
@@ -10,5 +11,5 @@ resources:
 
 # Image tag is patched per-overlay (staging uses sha, production uses semver).
 images:
-  - name: ghcr.io/OWNER/multi
+  - name: ghcr.io/julienau/multi
     newTag: latest

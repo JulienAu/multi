@@ -11,10 +11,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - mymulti.io
-      secretName: mymulti-io-tls
+        - mymulti.ai
+      secretName: mymulti-ai-tls
   rules:
-    - host: mymulti.io
+    - host: mymulti.ai
       http:
         paths:
           - path: /

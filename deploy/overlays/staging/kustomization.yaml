@@ -27,14 +27,14 @@ patches:
     patch: |-
       - op: replace
         path: /spec/tls/0/hosts/0
-        value: staging.mymulti.io
+        value: staging.mymulti.ai
       - op: replace
         path: /spec/tls/0/secretName
-        value: staging-mymulti-io-tls
+        value: staging-mymulti-ai-tls
       - op: replace
         path: /spec/rules/0/host
-        value: staging.mymulti.io
+        value: staging.mymulti.ai
 
 images:
-  - name: ghcr.io/OWNER/multi
+  - name: ghcr.io/julienau/multi
     newTag: staging
