@@ -15,13 +15,19 @@ const WELCOME_MESSAGE: Message = {
   role: 'assistant',
   content: `Bienvenue ! Je suis le **Coach ARS**, ton compagnon pour le livre *Agentic Revenue Systems*.
 
-Je suis entraîné sur l'intégralité du livre et je suis là pour t'aider à :
+Je suis entraîné sur l&apos;intégralité du livre et je suis là pour t&apos;aider à :
 - **Comprendre** les concepts clés (Capital Agentique, méthode VALUE, Canvas ARS...)
 - **Identifier** ton profil et ton positionnement dans la Matrice
 - **Construire** ton premier ARS pas à pas
 
-Par où veux-tu commencer ? Tu peux me poser une question sur un chapitre, ou on peut démarrer par ton **diagnostic** : quel est ton profil aujourd'hui ?`,
+Par où veux-tu commencer ?`,
 }
+
+const SUGGESTIONS = [
+  'C&apos;est quoi un ARS ?',
+  'Quel est mon profil ?',
+  'Explique la méthode VALUE',
+]
 
 export function ArsCoachChat() {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE])
@@ -41,6 +47,14 @@ export function ArsCoachChat() {
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   useEffect(scrollToBottom, [messages])
 
+  // Auto-resize textarea
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+    const el = e.target
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+  }
+
   // Init session + load history
   useEffect(() => {
     async function init() {
@@ -51,7 +65,6 @@ export function ArsCoachChat() {
           const data = JSON.parse(stored)
           setSessionId(data.sessionId)
 
-          // Load history and session state from server
           const res = await fetch(`/api/ars-coach/chat?sessionId=${data.sessionId}`)
           if (res.ok) {
             const { messages: history, session } = await res.json()
@@ -59,11 +72,15 @@ export function ArsCoachChat() {
             setActivated(session.activated)
             persistSession({ messageCount: session.messageCount, activated: session.activated })
 
+            if (!session.activated && session.messageCount >= 3) {
+              setShowEmailPrompt(true)
+            }
+
             if (history.length > 0) {
               setMessages([WELCOME_MESSAGE, ...history])
             }
           }
-        } catch { /* ignore, keep welcome message */ }
+        } catch { /* ignore */ }
       } else {
         try {
           const res = await fetch('/api/ars-coach/session', { method: 'POST' })
@@ -108,19 +125,18 @@ export function ArsCoachChat() {
     }
   }
 
-  const handleSend = async () => {
-    const text = input.trim()
-    if (!text || sending || !sessionId) return
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || sending || !sessionId) return
 
-    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }])
+    setMessages(prev => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text.trim() }])
     setInput('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
     setSending(true)
 
     const newCount = messageCount + 1
     setMessageCount(newCount)
     persistSession({ messageCount: newCount })
 
-    // Show email prompt after 3 messages (soft ask)
     if (!activated && newCount === 3) {
       setShowEmailPrompt(true)
     }
@@ -132,7 +148,7 @@ export function ArsCoachChat() {
       const res = await fetch('/api/ars-coach/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, sessionId }),
+        body: JSON.stringify({ message: text.trim(), sessionId }),
       })
 
       if (res.status === 429) {
@@ -192,151 +208,203 @@ export function ArsCoachChat() {
     }
   }
 
+  const handleSend = () => sendMessage(input)
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
+  const hasStarted = messages.length > 1
+  const isStreaming = sending && messages.some(m => m.id.startsWith('asst-') && m.content)
+  const isWaiting = sending && !isStreaming
+
   return (
     <div className="flex flex-col h-dvh bg-ui-bg">
       {/* Header */}
-      <header className="px-4 py-3 border-b border-ui-border flex items-center gap-3 shrink-0">
-        <div className="w-9 h-9 rounded-xl bg-brand-violet flex items-center justify-center text-white text-sm font-bold">
-          ARS
-        </div>
-        <div>
-          <h1 className="text-sm font-medium text-ui-text-primary">ARS Coach</h1>
-          <p className="text-[10px] text-ui-text-tertiary">Compagnon du livre Agentic Revenue Systems</p>
+      <header className="px-4 py-3 border-b border-ui-border shrink-0 bg-ui-bg/80 backdrop-blur-sm">
+        <div className="max-w-2xl mx-auto flex items-center gap-3">
+          <div className="relative">
+            <div className="w-10 h-10 rounded-xl bg-brand-violet flex items-center justify-center text-white text-xs font-bold tracking-tight">
+              ARS
+            </div>
+            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-brand-green border-2 border-ui-bg" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm font-semibold text-ui-text-primary">ARS Coach</h1>
+            <p className="text-[11px] text-ui-text-tertiary truncate">
+              {sending ? 'Reflexion en cours...' : 'Compagnon du livre Agentic Revenue Systems'}
+            </p>
+          </div>
+          {!activated && messageCount > 0 && (
+            <div className="text-[10px] text-ui-text-tertiary bg-ui-bg-tertiary px-2 py-1 rounded-full shrink-0">
+              {messageCount}/10
+            </div>
+          )}
         </div>
       </header>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.map(msg => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-up`}>
-            <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 ${
-              msg.role === 'user'
-                ? 'bg-brand-violet text-white rounded-br-md'
-                : 'bg-ui-bg-tertiary text-ui-text-primary rounded-bl-md'
-            }`}>
-              {msg.role === 'user' ? (
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-              ) : (
-                <div className="text-sm leading-relaxed prose-chat">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
+          {messages.map(msg => (
+            <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-up`}>
+              {/* Avatar */}
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-lg bg-brand-violet/10 flex items-center justify-center shrink-0 mt-0.5">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-brand-violet">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+                  </svg>
                 </div>
               )}
-            </div>
-          </div>
-        ))}
 
-        {/* Typing indicator */}
-        {sending && !messages.find(m => m.id.startsWith('asst-') && m.content) && (
-          <div className="flex justify-start">
-            <div className="bg-ui-bg-tertiary rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 rounded-full bg-ui-text-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-3 ${
+                msg.role === 'user'
+                  ? 'bg-brand-violet text-white rounded-br-sm'
+                  : 'bg-ui-bg-secondary border border-ui-border rounded-bl-sm'
+              }`}>
+                {msg.role === 'user' ? (
+                  <p className="text-[14px] whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                ) : (
+                  <div className="text-[14px] leading-relaxed prose-chat">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        )}
+          ))}
 
-        <div ref={messagesEndRef} />
+          {/* Typing indicator */}
+          {isWaiting && (
+            <div className="flex gap-3 animate-fade-up">
+              <div className="w-7 h-7 rounded-lg bg-brand-violet/10 flex items-center justify-center shrink-0 mt-0.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-brand-violet">
+                  <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <div className="bg-ui-bg-secondary border border-ui-border rounded-2xl rounded-bl-sm px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-violet/40 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-violet/40 animate-pulse" style={{ animationDelay: '300ms' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-violet/40 animate-pulse" style={{ animationDelay: '600ms' }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Suggestions (only before first message) */}
+          {!hasStarted && (
+            <div className="flex flex-wrap gap-2 pt-2">
+              {SUGGESTIONS.map(s => (
+                <button
+                  key={s}
+                  onClick={() => sendMessage(s.replace(/&apos;/g, "'"))}
+                  className="px-3.5 py-2 rounded-xl border border-ui-border text-[13px] text-ui-text-secondary hover:border-brand-violet hover:text-brand-violet hover:bg-brand-violet-light transition-all duration-200 cursor-pointer"
+                >
+                  {s.replace(/&apos;/g, "'")}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* Email prompt (soft — after 3 messages) */}
+      {/* Email prompt (soft) */}
       {showEmailPrompt && !activated && !showEmailBlock && (
-        <div className="mx-4 mb-2 p-3 rounded-xl bg-brand-violet-light border border-brand-violet/20 animate-fade-up">
-          <p className="text-xs text-ui-text-primary mb-2">
-            Sauvegarde ton parcours pour ne pas perdre ta progression.
-          </p>
-          <div className="flex gap-2">
+        <div className="border-t border-ui-border bg-brand-violet-light/50 animate-fade-up">
+          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-brand-violet shrink-0">
+              <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" />
+            </svg>
+            <p className="text-xs text-ui-text-secondary flex-1">Sauvegarde ton parcours</p>
             <input
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="ton@email.com"
-              className="flex-1 px-3 py-1.5 rounded-lg border border-ui-border bg-ui-bg text-xs focus:outline-none focus:border-brand-violet"
+              className="w-44 px-3 py-1.5 rounded-lg border border-ui-border bg-ui-bg text-xs focus:outline-none focus:ring-2 focus:ring-brand-violet/30 focus:border-brand-violet transition-all"
               onKeyDown={e => e.key === 'Enter' && handleActivate()}
             />
             <button
               onClick={handleActivate}
               disabled={emailSubmitting}
-              className="px-3 py-1.5 rounded-lg bg-brand-violet text-white text-xs font-medium hover:bg-brand-violet-dark transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 rounded-lg bg-brand-violet text-white text-xs font-medium hover:bg-brand-violet-dark transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {emailSubmitting ? '...' : 'Sauvegarder'}
+              {emailSubmitting ? '...' : 'OK'}
             </button>
             <button
               onClick={() => setShowEmailPrompt(false)}
-              className="px-2 py-1.5 text-xs text-ui-text-tertiary hover:text-ui-text-secondary"
+              className="p-1.5 text-ui-text-tertiary hover:text-ui-text-secondary cursor-pointer"
+              aria-label="Fermer"
             >
-              Plus tard
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           </div>
-          {emailError && <p className="text-[10px] text-status-error mt-1">{emailError}</p>}
+          {emailError && <p className="text-[10px] text-status-error text-center pb-2">{emailError}</p>}
         </div>
       )}
 
-      {/* Email block (hard — at 10 messages) */}
+      {/* Email block (hard) */}
       {showEmailBlock && !activated && (
-        <div className="mx-4 mb-2 p-4 rounded-xl bg-brand-violet-light border border-brand-violet/20 animate-fade-up">
-          <p className="text-sm font-medium text-ui-text-primary mb-1">
-            Entre ton email pour continuer
-          </p>
-          <p className="text-xs text-ui-text-secondary mb-3">
-            Tu as utilise tes 10 messages gratuits. Entre ton email pour debloquer l&apos;acces complet.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="ton@email.com"
-              className="flex-1 px-3 py-2 rounded-lg border border-ui-border bg-ui-bg text-sm focus:outline-none focus:border-brand-violet"
-              onKeyDown={e => e.key === 'Enter' && handleActivate()}
-            />
-            <button
-              onClick={handleActivate}
-              disabled={emailSubmitting}
-              className="px-4 py-2 rounded-lg bg-brand-violet text-white text-sm font-medium hover:bg-brand-violet-dark transition-colors disabled:opacity-50"
-            >
-              {emailSubmitting ? '...' : 'Continuer'}
-            </button>
+        <div className="border-t border-brand-violet/20 bg-brand-violet-light animate-fade-up">
+          <div className="max-w-2xl mx-auto px-4 py-4 text-center">
+            <p className="text-sm font-medium text-ui-text-primary mb-1">
+              Entre ton email pour continuer
+            </p>
+            <p className="text-xs text-ui-text-secondary mb-3">
+              10 messages gratuits utilises. Debloque l&apos;acces complet.
+            </p>
+            <div className="flex gap-2 max-w-sm mx-auto">
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="ton@email.com"
+                className="flex-1 px-3 py-2.5 rounded-xl border border-ui-border bg-ui-bg text-sm focus:outline-none focus:ring-2 focus:ring-brand-violet/30 focus:border-brand-violet transition-all"
+                onKeyDown={e => e.key === 'Enter' && handleActivate()}
+                autoFocus
+              />
+              <button
+                onClick={handleActivate}
+                disabled={emailSubmitting}
+                className="px-5 py-2.5 rounded-xl bg-brand-violet text-white text-sm font-medium hover:bg-brand-violet-dark transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {emailSubmitting ? '...' : 'Continuer'}
+              </button>
+            </div>
+            {emailError && <p className="text-xs text-status-error mt-2">{emailError}</p>}
           </div>
-          {emailError && <p className="text-xs text-status-error mt-1">{emailError}</p>}
         </div>
       )}
 
       {/* Input */}
-      <div className="px-4 py-3 border-t border-ui-border shrink-0">
-        <div className="flex gap-2 items-end max-w-3xl mx-auto">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Pose ta question sur le livre..."
-            rows={1}
-            className="flex-1 resize-none rounded-xl border border-ui-border bg-ui-bg px-4 py-2.5 text-sm text-ui-text-primary placeholder:text-ui-text-tertiary focus:outline-none focus:border-brand-violet transition-colors"
-            style={{ maxHeight: '120px' }}
-            disabled={sending || (showEmailBlock && !activated)}
-          />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || sending || (showEmailBlock && !activated)}
-            className="shrink-0 w-10 h-10 rounded-xl bg-brand-violet text-white flex items-center justify-center hover:bg-brand-violet-dark transition-colors disabled:opacity-40"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
+      <div className="border-t border-ui-border bg-ui-bg shrink-0">
+        <div className="max-w-2xl mx-auto px-4 py-3">
+          <div className="flex gap-2 items-end">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Pose ta question sur le livre..."
+              rows={1}
+              className="flex-1 resize-none rounded-xl border border-ui-border bg-ui-bg-secondary px-4 py-2.5 text-[14px] text-ui-text-primary placeholder:text-ui-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand-violet/30 focus:border-brand-violet focus:bg-ui-bg transition-all"
+              style={{ maxHeight: '120px' }}
+              disabled={sending || (showEmailBlock && !activated)}
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || sending || (showEmailBlock && !activated)}
+              className="shrink-0 w-11 h-11 rounded-xl bg-brand-violet text-white flex items-center justify-center hover:bg-brand-violet-dark active:scale-95 transition-all disabled:opacity-30 disabled:active:scale-100 cursor-pointer"
+              aria-label="Envoyer"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
         </div>
-        {!activated && (
-          <p className="text-[10px] text-ui-text-tertiary text-center mt-1.5">
-            {messageCount}/10 messages gratuits
-          </p>
-        )}
       </div>
     </div>
   )
