@@ -42,6 +42,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # Drizzle migrations (used by the separate migrate Job in k8s)
 COPY --from=builder --chown=nextjs:nodejs /app/lib/db/migrations ./lib/db/migrations
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.ts ./scripts/migrate.ts
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
 
 # Docker CLI needed only if the orchestrator backend is `docker`.
 # For k3s (production target), this is unused and can be dropped once migrated.
