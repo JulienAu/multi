@@ -18,7 +18,7 @@ export const arsStatusEnum = pgEnum('ars_status', [
 export const users = pgTable('users', {
   id:                          uuid('id').primaryKey().defaultRandom(),
   email:                       varchar('email', { length: 255 }).unique().notNull(),
-  passwordHash:                varchar('password_hash', { length: 255 }).notNull(),
+  passwordHash:                varchar('password_hash', { length: 255 }),
   firstName:                   varchar('first_name', { length: 100 }),
   lastName:                    varchar('last_name', { length: 100 }),
   stripeCustomerId:            varchar('stripe_customer_id', { length: 255 }).unique(),
@@ -309,6 +309,26 @@ export const analyticsEvents = pgTable('analytics_events', {
   createdAt:  timestamp('created_at').defaultNow().notNull(),
 })
 
+// ─── ARS COACH ─────────────────────────────────────────────────────────
+
+export const arsCoachSessions = pgTable('ars_coach_sessions', {
+  id:           uuid('id').primaryKey().defaultRandom(),
+  email:        varchar('email', { length: 255 }),
+  messageCount: integer('message_count').default(0).notNull(),
+  quadrant:     varchar('quadrant', { length: 50 }),
+  level:        integer('level'),
+  createdAt:    timestamp('created_at').defaultNow().notNull(),
+  updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const arsCoachMessages = pgTable('ars_coach_messages', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('session_id').references(() => arsCoachSessions.id).notNull(),
+  role:      varchar('role', { length: 20 }).notNull(),
+  content:   text('content').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
 // ─── INFER TYPES ────────────────────────────────────────────────────────────
 
 export type User            = typeof users.$inferSelect
@@ -331,3 +351,5 @@ export type ModelConfig       = typeof modelConfigs.$inferSelect
 export type LlmUsage          = typeof llmUsage.$inferSelect
 export type AgentJob          = typeof agentJobs.$inferSelect
 export type AgentJobRun       = typeof agentJobRuns.$inferSelect
+export type ArsCoachSession   = typeof arsCoachSessions.$inferSelect
+export type ArsCoachMessage   = typeof arsCoachMessages.$inferSelect

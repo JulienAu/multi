@@ -51,6 +51,27 @@ export async function callLLM(request: OpenRouterRequest): Promise<OpenRouterRes
   return response.json()
 }
 
+/** Streaming variant — returns the raw Response with SSE body. */
+export async function callLLMStream(request: OpenRouterRequest): Promise<Response> {
+  const response = await fetch(`${process.env.OPENROUTER_BASE_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://multi.app',
+      'X-Title': 'MULTI - Generative Business Platform',
+    },
+    body: JSON.stringify({ ...request, stream: true }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`OpenRouter API error ${response.status}: ${error}`)
+  }
+
+  return response
+}
+
 // Modèles disponibles via OpenRouter
 export const MODELS = {
   GENERATION:   process.env.LLM_MODEL_GENERATION || 'anthropic/claude-sonnet-4-5',
