@@ -9,6 +9,7 @@ const PREVIEW_PORT_RANGE_START = 20000
 const PREVIEW_PORT_RANGE_END = 20999
 const DOCKER_NETWORK = 'multi_default'
 const OPENCLAW_IMAGE = 'ghcr.io/openclaw/openclaw:latest'
+const DATA_MOUNT = '/home/node/.openclaw'
 
 async function findAvailablePort(): Promise<number> {
   const usedPorts = await db.query.openclawInstances.findMany({
@@ -287,13 +288,6 @@ function sleep(ms: number) {
 }
 
 /**
- * Get the host path for a container's home directory.
- */
-function getHomeDir(containerName: string): string {
-  return `/tmp/openclaw-homes/${containerName}`
-}
-
-/**
  * Provision a new OpenClaw container for a user.
  * Strategy:
  *   1. Create container with workspace only (let OpenClaw auto-generate config)
@@ -338,21 +332,27 @@ export async function provisionOpenClaw(businessId: string): Promise<{
   try {
     const { agentsMd, soulMd } = await buildWorkspaceContext(businessId)
     const homeDir = `/tmp/openclaw-homes/${containerName}`
-    const fs = await import('fs/promises')
-    await fs.mkdir(`${homeDir}/workspace`, { recursive: true })
-    await fs.writeFile(`${homeDir}/workspace/AGENTS.md`, agentsMd, 'utf-8')
-    await fs.writeFile(`${homeDir}/workspace/SOUL.md`, soulMd, 'utf-8')
-    // Also write BUSINESS.md as a standalone file (OpenClaw tools can read it)
+
     const latestDoc = await db.query.businessDocs.findFirst({
       where: (d, { eq }) => eq(d.businessId, businessId),
       orderBy: [desc(businessDocs.createdAt)],
     })
-    if (latestDoc) {
-      await fs.writeFile(`${homeDir}/workspace/BUSINESS.md`, latestDoc.content, 'utf-8')
-    }
 
-    // Fix ownership for node user (uid 1000)
-    await orchestrator.fixOwnership(homeDir, '1000:1000')
+    const initFiles = [
+      { path: 'workspace/AGENTS.md', content: agentsMd },
+      { path: 'workspace/SOUL.md', content: soulMd },
+      ...(latestDoc ? [{ path: 'workspace/BUSINESS.md', content: latestDoc.content }] : []),
+    ]
+
+    // For Docker backend: write files to host before container start
+    if (process.env.ORCHESTRATOR_BACKEND !== 'k3s') {
+      const fs = await import('fs/promises')
+      await fs.mkdir(`${homeDir}/workspace`, { recursive: true })
+      for (const f of initFiles) {
+        await fs.writeFile(`${homeDir}/${f.path}`, f.content, 'utf-8')
+      }
+      await orchestrator.fixOwnership(homeDir, '1000:1000')
+    }
 
     // === PHASE 1: Start container (OpenClaw will auto-generate config) ===
     const { id: containerId } = await orchestrator.create({
@@ -368,11 +368,10 @@ export async function provisionOpenClaw(businessId: string): Promise<{
       memory: '1g',
       cpus: '1',
       hardening: {
-        // Subset conservateur validé avec l'image OpenClaw actuelle.
-        // `dropAllCapabilities` + `readOnlyRootfs` à activer après validation sur une VM test.
         noNewPrivileges: true,
         pidsLimit: 512,
       },
+      initFiles,
     })
 
     await db.update(openclawInstances)
@@ -381,13 +380,12 @@ export async function provisionOpenClaw(businessId: string): Promise<{
 
     // === PHASE 2: Wait for OpenClaw to start and generate config ===
     // OpenClaw can take 30-90s to fully boot and write config
+    const containerConfigPath = `${DATA_MOUNT}/openclaw.json`
     let configReady = false
     for (let i = 0; i < 40; i++) {
       await sleep(5000)
       try {
-        const configPath = `${homeDir}/openclaw.json`
-        await fs.access(configPath) // Check file exists before reading
-        const configRaw = await fs.readFile(configPath, 'utf-8')
+        const configRaw = await orchestrator.readFile(containerName, containerConfigPath)
         console.log(`[openclaw] config read attempt ${i + 1}, length=${configRaw.length}`)
         const config = JSON.parse(configRaw)
         if (config.gateway?.auth?.token) {
@@ -444,7 +442,7 @@ export async function provisionOpenClaw(businessId: string): Promise<{
           // Note: tools are auto-approved when using /v1/chat/completions HTTP API
           // The OpenAI-compatible endpoint handles tool execution internally
 
-          await fs.writeFile(`${homeDir}/openclaw.json`, JSON.stringify(config, null, 2), 'utf-8')
+          await orchestrator.writeFile(containerName, containerConfigPath, JSON.stringify(config, null, 2))
 
           // === PHASE 4: Pre-pair a device for our WS client ===
           console.log('[openclaw] pre-pairing device for WebSocket access...')
@@ -454,22 +452,23 @@ export async function provisionOpenClaw(businessId: string): Promise<{
           // Merge with existing paired devices
           let existingPaired: Record<string, unknown> = {}
           try {
-            const pairedRaw = await fs.readFile(`${homeDir}/devices/paired.json`, 'utf-8')
+            const pairedRaw = await orchestrator.readFile(containerName, `${DATA_MOUNT}/devices/paired.json`)
             existingPaired = JSON.parse(pairedRaw)
           } catch { /* file may not exist yet */ }
           const mergedPaired = { ...existingPaired, ...pairedEntry }
-          await fs.mkdir(`${homeDir}/devices`, { recursive: true })
-          await fs.writeFile(`${homeDir}/devices/paired.json`, JSON.stringify(mergedPaired, null, 2), 'utf-8')
+          await orchestrator.writeFile(containerName, `${DATA_MOUNT}/devices/paired.json`, JSON.stringify(mergedPaired, null, 2))
 
           // Save device identity for our WS client
-          await fs.writeFile(`${homeDir}/multi-device.json`, JSON.stringify({
+          await orchestrator.writeFile(containerName, `${DATA_MOUNT}/multi-device.json`, JSON.stringify({
             deviceId: device.deviceId,
             pubKeyB64Url: device.pubKeyB64Url,
             privPem: device.privPem,
-          }), 'utf-8')
+          }))
 
           // Fix permissions on all files we wrote (node user uid 1000)
-          await orchestrator.fixOwnership(homeDir, '1000:1000')
+          if (process.env.ORCHESTRATOR_BACKEND !== 'k3s') {
+            await orchestrator.fixOwnership(homeDir, '1000:1000')
+          }
 
           // === PHASE 4b: Install default skills ===
           console.log('[openclaw] installing default skills...')
@@ -514,7 +513,7 @@ export async function provisionOpenClaw(businessId: string): Promise<{
           } catch { /* ignore */ }
 
           // === PHASE 7: Read final token + save ===
-          const finalConfigRaw = await fs.readFile(`${homeDir}/openclaw.json`, 'utf-8')
+          const finalConfigRaw = await orchestrator.readFile(containerName, containerConfigPath)
           const finalConfig = JSON.parse(finalConfigRaw)
           const finalToken = finalConfig.gateway?.auth?.token ?? config.gateway.auth.token
 
@@ -610,10 +609,10 @@ async function fetchOpenClaw(
   messages: { role: string; content: string }[],
   stream: boolean,
 ): Promise<Response> {
-  const hosts = [
-    `${instance.containerName}:18789`,
-    `host.docker.internal:${instance.port}`,
-  ]
+  const k3sHost = `${instance.containerName}.workspace-${instance.containerName.replace(/^openclaw-/, '')}.svc.cluster.local:18789`
+  const hosts = process.env.ORCHESTRATOR_BACKEND === 'k3s'
+    ? [k3sHost]
+    : [`${instance.containerName}:18789`, `host.docker.internal:${instance.port}`]
 
   let lastError = ''
   for (const host of hosts) {
@@ -653,18 +652,16 @@ export async function refreshWorkspace(businessId: string): Promise<void> {
   if (!instance || instance.status !== 'running') return
 
   const { agentsMd, soulMd } = await buildWorkspaceContext(businessId)
-  const homeDir = `/tmp/openclaw-homes/${instance.containerName}`
 
-  const fs = await import('fs/promises')
-  await fs.writeFile(`${homeDir}/workspace/AGENTS.md`, agentsMd, 'utf-8')
-  await fs.writeFile(`${homeDir}/workspace/SOUL.md`, soulMd, 'utf-8')
+  await orchestrator.writeFile(instance.containerName, `${DATA_MOUNT}/workspace/AGENTS.md`, agentsMd)
+  await orchestrator.writeFile(instance.containerName, `${DATA_MOUNT}/workspace/SOUL.md`, soulMd)
 
   const latestDoc = await db.query.businessDocs.findFirst({
     where: (d, { eq }) => eq(d.businessId, businessId),
     orderBy: [desc(businessDocs.createdAt)],
   })
   if (latestDoc) {
-    await fs.writeFile(`${homeDir}/workspace/BUSINESS.md`, latestDoc.content, 'utf-8')
+    await orchestrator.writeFile(instance.containerName, `${DATA_MOUNT}/workspace/BUSINESS.md`, latestDoc.content)
   }
 }
 
@@ -678,12 +675,10 @@ export async function hotSwapAgentModel(businessId: string, newModel: string): P
     throw new Error('OpenClaw instance not running')
   }
 
-  const homeDir = getHomeDir(instance.containerName)
-  const fs = await import('fs/promises')
+  const containerConfigPath = `${DATA_MOUNT}/openclaw.json`
 
   // 1. Read current config
-  const configPath = `${homeDir}/openclaw.json`
-  const configRaw = await fs.readFile(configPath, 'utf-8')
+  const configRaw = await orchestrator.readFile(instance.containerName, containerConfigPath)
   const config = JSON.parse(configRaw)
 
   // 2. Patch model — use 'multi' provider (not 'openrouter' which is reserved)
@@ -714,10 +709,7 @@ export async function hotSwapAgentModel(businessId: string, newModel: string): P
     }
   }
 
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8')
-
-  // 3. Fix permissions
-  await orchestrator.fixOwnership(homeDir, '1000:1000')
+  await orchestrator.writeFile(instance.containerName, containerConfigPath, JSON.stringify(config, null, 2))
 
   // 4. Disconnect active WS session (will auto-reconnect on next message)
   const { sessionManager } = await import('./session-manager')

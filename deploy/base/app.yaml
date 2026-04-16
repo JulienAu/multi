@@ -18,6 +18,7 @@ spec:
       labels:
         app: multi-app
     spec:
+      serviceAccountName: multi-app
       containers:
         - name: app
           image: ghcr.io/julienau/multi:latest
@@ -34,6 +35,8 @@ spec:
               value: production
             - name: ORCHESTRATOR_BACKEND
               value: k3s
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:
             requests:
               cpu: 250m

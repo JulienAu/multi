@@ -92,14 +92,14 @@ spec:
     - ports:
         - port: 5432
           protocol: TCP
-    # Webhook from user workspaces to app (they'll be in workspace-* namespaces)
+    # App → workspace pods (OpenClaw API port 18789 + preview port 3000)
     - to:
         - namespaceSelector:
-            matchExpressions:
-              - key: kubernetes.io/metadata.name
-                operator: In
-                values: ["multi"]
+            matchLabels:
+              tier: workspace
       ports:
+        - port: 18789
+          protocol: TCP
         - port: 3000
           protocol: TCP
 

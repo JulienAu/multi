@@ -15,6 +15,8 @@ export interface WorkspaceSpec {
   restartPolicy?: 'no' | 'always' | 'unless-stopped'
   /** Durcissement sécurité (appliqué par Docker ou k3s selon backend). */
   hardening?: WorkspaceHardening
+  /** Files to seed into the volume before the container starts (used by k3s). */
+  initFiles?: Array<{ path: string; content: string }>
 }
 
 export interface WorkspaceHardening {
@@ -56,4 +58,8 @@ export interface Orchestrator {
   logs(name: string, tailLines: number): Promise<string>
   /** Fix file ownership on a host path (for the node uid 1000 on bind-mounted volumes). */
   fixOwnership(hostPath: string, uidGid: string): Promise<void>
+  /** Read a file from inside a running workspace. */
+  readFile(name: string, filePath: string): Promise<string>
+  /** Write a file inside a running workspace. */
+  writeFile(name: string, filePath: string, content: string): Promise<void>
 }

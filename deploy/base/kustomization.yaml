@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - rbac.yaml
   - postgres.yaml
   - app.yaml
   - ingress.yaml

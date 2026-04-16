@@ -45,9 +45,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.ts ./scripts/migr
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
 
-# Docker CLI needed only if the orchestrator backend is `docker`.
-# For k3s (production target), this is unused and can be dropped once migrated.
-RUN apk add --no-cache docker-cli
+# kubectl for k3s orchestrator exec; docker-cli kept for local dev
+RUN apk add --no-cache docker-cli kubectl
 
 USER nextjs
 EXPOSE 3000

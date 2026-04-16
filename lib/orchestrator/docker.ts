@@ -67,4 +67,16 @@ export const dockerOrchestrator: Orchestrator = {
   async fixOwnership(hostPath: string, uidGid: string) {
     await dockerExec(['run', '--rm', '-v', `${hostPath}:/fix`, 'alpine', 'chown', '-R', uidGid, '/fix'])
   },
+
+  async readFile(_name: string, filePath: string) {
+    const { readFile } = await import('fs/promises')
+    return readFile(filePath, 'utf-8')
+  },
+
+  async writeFile(_name: string, filePath: string, content: string) {
+    const { writeFile, mkdir } = await import('fs/promises')
+    const { dirname } = await import('path')
+    await mkdir(dirname(filePath), { recursive: true })
+    await writeFile(filePath, content, 'utf-8')
+  },
 }
