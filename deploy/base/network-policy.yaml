@@ -37,6 +37,31 @@ spec:
           protocol: TCP
 
 ---
+# 2b. Allow Traefik to reach cert-manager ACME HTTP-01 solver pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver
+  namespace: multi
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 8089
+          protocol: TCP
+  egress:
+    - {}
+
+---
 # 3. Allow app egress to DNS + HTTPS (OpenRouter, Stripe, Postmark, etc.)
 # Neon DB: allow TCP 5432 to any destination (Neon is cloud-hosted).
 apiVersion: networking.k8s.io/v1
@@ -76,6 +101,58 @@ spec:
                 values: ["multi"]
       ports:
         - port: 3000
+          protocol: TCP
+
+---
+# 3b. Allow postgres to receive connections from within the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres
+  namespace: multi
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5432
+          protocol: TCP
+  egress:
+    - {}
+
+---
+# 3c. Allow migrate job egress to DNS + postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-migrate
+  namespace: multi
+spec:
+  podSelector:
+    matchLabels:
+      job-name: multi-migrate
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
           protocol: TCP
 
 ---
