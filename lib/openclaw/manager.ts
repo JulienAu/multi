@@ -726,11 +726,10 @@ export async function checkHealth(businessId: string): Promise<boolean> {
   if (!instance || instance.status !== 'running') return false
 
   try {
-    // Try both routes
-    const hosts = [
-      `${instance.containerName}:18789`,
-      `host.docker.internal:${instance.port}`,
-    ]
+    const k3sHost = `${instance.containerName}.workspace-${instance.containerName.replace(/^openclaw-/, '')}.svc.cluster.local:18789`
+    const hosts = process.env.ORCHESTRATOR_BACKEND === 'k3s'
+      ? [k3sHost]
+      : [`${instance.containerName}:18789`, `host.docker.internal:${instance.port}`]
 
     for (const host of hosts) {
       try {

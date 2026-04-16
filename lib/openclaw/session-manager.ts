@@ -38,19 +38,19 @@ class SessionManager {
       throw new Error('OpenClaw instance not running')
     }
 
-    const fs = await import('fs/promises')
+    const { orchestrator } = await import('@/lib/orchestrator')
     let deviceIdentity: { deviceId: string; pubKeyB64Url: string; privPem: string } | undefined
     try {
-      const raw = await fs.readFile(`/tmp/openclaw-homes/${instance.containerName}/multi-device.json`, 'utf-8')
+      const raw = await orchestrator.readFile(instance.containerName, '/home/node/.openclaw/multi-device.json')
       deviceIdentity = JSON.parse(raw)
     } catch {
       console.log('[openclaw/ws] no device identity found, connecting without device signing')
     }
 
-    const hosts = [
-      `${instance.containerName}:18789`,
-      `host.docker.internal:${instance.port}`,
-    ]
+    const k3sHost = `${instance.containerName}.workspace-${instance.containerName.replace(/^openclaw-/, '')}.svc.cluster.local:18789`
+    const hosts = process.env.ORCHESTRATOR_BACKEND === 'k3s'
+      ? [k3sHost]
+      : [`${instance.containerName}:18789`, `host.docker.internal:${instance.port}`]
 
     let client: OpenClawClient | null = null
     let lastError = ''
