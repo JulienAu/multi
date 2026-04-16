@@ -1,37 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { readFile, writeFile, readdir, stat, rm, realpath } from 'fs/promises'
-import { join, extname, basename } from 'path'
-
-/**
- * Résout un chemin relatif au workspace en le normalisant contre les symlinks.
- * Protège contre un agent malveillant qui créerait `workspace/escape -> /etc/passwd`.
- */
-async function safeResolve(workspaceDir: string, relativePath: string): Promise<string | null> {
-  const raw = join(workspaceDir, relativePath)
-  try {
-    // realpath résout les symlinks sur le path existant.
-    const resolved = await realpath(raw)
-    const workspaceReal = await realpath(workspaceDir)
-    if (!resolved.startsWith(workspaceReal + '/') && resolved !== workspaceReal) return null
-    return resolved
-  } catch {
-    // Fichier n'existe pas encore (cas du PUT d'un nouveau fichier) :
-    // on vérifie juste que le parent est dans le workspace.
-    try {
-      const parent = await realpath(join(raw, '..'))
-      const workspaceReal = await realpath(workspaceDir)
-      if (!parent.startsWith(workspaceReal + '/') && parent !== workspaceReal) return null
-      return raw
-    } catch {
-      return null
-    }
-  }
-}
+import { orchestrator } from '@/lib/orchestrator'
 import { z } from 'zod'
-import archiver from 'archiver'
-import { Readable } from 'stream'
+
+const WORKSPACE = '/home/node/.openclaw/workspace'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -46,72 +19,49 @@ const MIME_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
 }
 
+async function requireInstance() {
+  const businessId = await getCurrentBusinessId()
+  if (!businessId) throw new Error('AUTH')
+  const instance = await getOpenClawInstance(businessId)
+  if (!instance) throw new Error('NO_INSTANCE')
+  return { businessId, instance }
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const businessId = await getCurrentBusinessId()
-    if (!businessId) {
-      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
-    }
-
-    const instance = await getOpenClawInstance(businessId)
-    if (!instance) {
-      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
-    }
-
+    const { instance } = await requireInstance()
+    const name = instance.containerName
     const filePath = req.nextUrl.searchParams.get('path')
-    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
 
-    // List files if no path
     if (!filePath) {
-      const files = await listFiles(workspaceDir, workspaceDir)
+      const script = `node -e "const fs=require('fs'),p=require('path');function ls(d,r){try{const e=fs.readdirSync(d,{withFileTypes:true});const res=[];for(const f of e){const fp=p.join(d,f.name);const rp=fp.slice(r.length+1);if(f.isDirectory()){res.push({name:f.name,path:rp,size:0,isDir:true});res.push(...ls(fp,r))}else{try{const s=fs.statSync(fp);res.push({name:f.name,path:rp,size:s.size,isDir:false})}catch{}}}return res}catch{return[]}}console.log(JSON.stringify(ls('${WORKSPACE}','${WORKSPACE}')))"`
+      const output = await orchestrator.exec(name, ['sh', '-c', script])
+      const files = JSON.parse(output)
       return NextResponse.json({ files })
     }
 
-    const resolved = await safeResolve(workspaceDir, filePath)
-    if (!resolved) {
+    if (filePath.includes('..')) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
+    const fullPath = `${WORKSPACE}/${filePath}`
+    const content = await orchestrator.readFile(name, fullPath)
+    const ext = filePath.includes('.') ? '.' + filePath.split('.').pop()!.toLowerCase() : ''
+    const mime = MIME_TYPES[ext] ?? 'text/plain'
+
     const download = req.nextUrl.searchParams.get('download') === 'true'
-    const zip = req.nextUrl.searchParams.get('zip') === 'true'
-
-    // ZIP download for directories
-    if (zip) {
-      const s = await stat(resolved)
-      if (!s.isDirectory()) {
-        return NextResponse.json({ error: 'Not a directory' }, { status: 400 })
-      }
-
-      const archive = archiver('zip', { zlib: { level: 5 } })
-      archive.directory(resolved, basename(resolved))
-      archive.finalize()
-
-      // Convert Node stream to Web ReadableStream
-      const webStream = Readable.toWeb(archive) as ReadableStream
-      const name = basename(resolved) + '.zip'
-
-      return new Response(webStream, {
-        headers: {
-          'Content-Type': 'application/zip',
-          'Content-Disposition': `attachment; filename="${name}"`,
-        },
-      })
-    }
-
-    const content = await readFile(resolved)
-    const ext = extname(resolved).toLowerCase()
-    const mime = MIME_TYPES[ext] ?? 'application/octet-stream'
-
     const headers: Record<string, string> = { 'Content-Type': mime }
     if (download) {
-      headers['Content-Disposition'] = `attachment; filename="${basename(resolved)}"`
+      const fileName = filePath.split('/').pop() || 'file'
+      headers['Content-Disposition'] = `attachment; filename="${fileName}"`
     }
 
     return new Response(content, { headers })
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return NextResponse.json({ error: 'File not found' }, { status: 404 })
-    }
+    if (error instanceof Error && error.message === 'AUTH')
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
+    if (error instanceof Error && error.message === 'NO_INSTANCE')
+      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
     console.error('[openclaw/files]', error)
     return NextResponse.json({ error: 'Failed to read file' }, { status: 500 })
   }
@@ -124,28 +74,20 @@ const putSchema = z.object({
 
 export async function PUT(req: NextRequest) {
   try {
-    const businessId = await getCurrentBusinessId()
-    if (!businessId) {
-      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
-    }
-
-    const instance = await getOpenClawInstance(businessId)
-    if (!instance) {
-      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
-    }
-
+    const { instance } = await requireInstance()
     const { path: filePath, content } = putSchema.parse(await req.json())
-    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
 
-    const resolved = await safeResolve(workspaceDir, filePath)
-    if (!resolved) {
+    if (filePath.includes('..')) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
-    await writeFile(resolved, content, 'utf-8')
-
+    await orchestrator.writeFile(instance.containerName, `${WORKSPACE}/${filePath}`, content)
     return NextResponse.json({ ok: true, path: filePath })
   } catch (error) {
+    if (error instanceof Error && error.message === 'AUTH')
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
+    if (error instanceof Error && error.message === 'NO_INSTANCE')
+      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
     console.error('[openclaw/files/put]', error)
     return NextResponse.json({ error: 'Failed to write file' }, { status: 500 })
   }
@@ -157,53 +99,21 @@ const deleteSchema = z.object({
 
 export async function DELETE(req: NextRequest) {
   try {
-    const businessId = await getCurrentBusinessId()
-    if (!businessId) {
-      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
-    }
-
-    const instance = await getOpenClawInstance(businessId)
-    if (!instance) {
-      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
-    }
-
+    const { instance } = await requireInstance()
     const { path: filePath } = deleteSchema.parse(await req.json())
-    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
 
-    const resolved = await safeResolve(workspaceDir, filePath)
-    if (!resolved) {
+    if (filePath.includes('..')) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
-    await rm(resolved, { recursive: true })
-
+    await orchestrator.exec(instance.containerName, ['rm', '-rf', `${WORKSPACE}/${filePath}`])
     return NextResponse.json({ ok: true })
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return NextResponse.json({ error: 'File not found' }, { status: 404 })
-    }
+    if (error instanceof Error && error.message === 'AUTH')
+      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
+    if (error instanceof Error && error.message === 'NO_INSTANCE')
+      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
     console.error('[openclaw/files/delete]', error)
     return NextResponse.json({ error: 'Failed to delete' }, { status: 500 })
   }
-}
-
-async function listFiles(dir: string, root: string): Promise<{ name: string; path: string; size: number; isDir: boolean }[]> {
-  const entries = await readdir(dir, { withFileTypes: true })
-  const results: { name: string; path: string; size: number; isDir: boolean }[] = []
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name)
-    const relativePath = fullPath.slice(root.length + 1)
-
-    if (entry.isDirectory()) {
-      results.push({ name: entry.name, path: relativePath, size: 0, isDir: true })
-      const sub = await listFiles(fullPath, root).catch(() => [])
-      results.push(...sub)
-    } else {
-      const s = await stat(fullPath).catch(() => null)
-      results.push({ name: entry.name, path: relativePath, size: s?.size ?? 0, isDir: false })
-    }
-  }
-
-  return results
 }

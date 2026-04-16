@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { readFile, stat, realpath } from 'fs/promises'
-import { join, extname } from 'path'
+import { orchestrator } from '@/lib/orchestrator'
+import { extname, join } from 'path'
 
-async function safeResolve(workspaceDir: string, relativePath: string): Promise<string | null> {
-  try {
-    const resolved = await realpath(join(workspaceDir, relativePath))
-    const workspaceReal = await realpath(workspaceDir)
-    if (!resolved.startsWith(workspaceReal + '/') && resolved !== workspaceReal) return null
-    return resolved
-  } catch {
-    return null
-  }
-}
+const WORKSPACE = '/home/node/.openclaw/workspace'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -31,14 +22,9 @@ const MIME_TYPES: Record<string, string> = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
-  '.eot': 'application/vnd.ms-fontobject',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
   '.pdf': 'application/pdf',
-  '.xml': 'application/xml',
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/plain; charset=utf-8',
-  '.map': 'application/json',
 }
 
 export async function GET(
@@ -47,53 +33,38 @@ export async function GET(
 ) {
   try {
     const businessId = await getCurrentBusinessId()
-    if (!businessId) {
-      return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
-    }
+    if (!businessId) return NextResponse.json({ error: 'Aucun business actif' }, { status: 401 })
 
     const instance = await getOpenClawInstance(businessId)
-    if (!instance) {
-      return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
-    }
+    if (!instance) return NextResponse.json({ error: 'Agent non déployé' }, { status: 400 })
 
     const { path: pathSegments } = await params
-    const filePath = pathSegments.join('/')
-    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
+    let filePath = pathSegments.join('/')
 
-    const resolved = await safeResolve(workspaceDir, filePath)
-    if (!resolved) {
+    if (filePath.includes('..')) {
       return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
     }
 
-    // Try the exact path, then index.html if it's a directory
-    let targetPath = resolved
-    try {
-      const s = await stat(resolved)
-      if (s.isDirectory()) {
-        const indexResolved = await safeResolve(workspaceDir, join(filePath, 'index.html'))
-        if (indexResolved) targetPath = indexResolved
-      }
-    } catch {
-      // File might not exist, will error below
-    }
+    const name = instance.containerName
 
-    const content = await readFile(targetPath)
-    const ext = extname(targetPath).toLowerCase()
+    // Check if path is a directory → serve index.html
+    try {
+      const check = await orchestrator.exec(name, ['test', '-d', `${WORKSPACE}/${filePath}`])
+      if (check !== undefined) filePath = join(filePath, 'index.html')
+    } catch { /* not a dir, continue */ }
+
+    const content = await orchestrator.readFile(name, `${WORKSPACE}/${filePath}`)
+    const ext = extname(filePath).toLowerCase()
     const mime = MIME_TYPES[ext] ?? 'application/octet-stream'
 
-    // Cache static assets, no-cache for HTML
-    const cacheControl = ext === '.html' || ext === '.htm'
-      ? 'no-cache'
-      : 'public, max-age=3600'
+    const cacheControl = ext === '.html' || ext === '.htm' ? 'no-cache' : 'public, max-age=3600'
 
     return new Response(content, {
-      headers: {
-        'Content-Type': mime,
-        'Cache-Control': cacheControl,
-      },
+      headers: { 'Content-Type': mime, 'Cache-Control': cacheControl },
     })
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    const msg = error instanceof Error ? error.message : ''
+    if (msg.includes('No such file') || msg.includes('cat:')) {
       return new Response('404 Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } })
     }
     console.error('[openclaw/preview]', error)

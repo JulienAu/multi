@@ -48,12 +48,12 @@ export async function GET() {
     where: (o, { eq }) => eq(o.status, 'running'),
   })
 
-  const fs = await import('fs/promises')
+  const { orchestrator } = await import('@/lib/orchestrator')
   const agents = await Promise.all(
     instances.map(async (inst) => {
       let currentModel = 'unknown'
       try {
-        const configRaw = await fs.readFile(`/tmp/openclaw-homes/${inst.containerName}/openclaw.json`, 'utf-8')
+        const configRaw = await orchestrator.readFile(inst.containerName, '/home/node/.openclaw/openclaw.json')
         const config = JSON.parse(configRaw)
         currentModel = config.agents?.defaults?.model?.primary ?? 'unknown'
       } catch {}

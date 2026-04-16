@@ -4,7 +4,7 @@ import { getOpenClawInstance } from '@/lib/openclaw/manager'
 import { db, openclawInstances } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { readFile, writeFile } from 'fs/promises'
+import { orchestrator } from '@/lib/orchestrator'
 
 const schema = z.object({
   enabled: z.boolean(),
@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
 
     const instance = await getOpenClawInstance(businessId)
     if (instance) {
-      const configPath = `/tmp/openclaw-homes/${instance.containerName}/openclaw.json`
+      const configPath = '/home/node/.openclaw/openclaw.json'
       try {
-        const configRaw = await readFile(configPath, 'utf-8')
+        const configRaw = await orchestrator.readFile(instance.containerName, configPath)
         const config = JSON.parse(configRaw)
         config.execApprovals = {
           version: 1,
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
             ask: enabled ? 'off' : 'always',
           },
         }
-        await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8')
+        await orchestrator.writeFile(instance.containerName, configPath, JSON.stringify(config, null, 2))
       } catch { /* ignore if config not accessible */ }
     }
 

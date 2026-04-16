@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentBusinessId } from '@/lib/auth'
 import { getOpenClawInstance } from '@/lib/openclaw/manager'
-import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
+import { orchestrator } from '@/lib/orchestrator'
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 // 10 MB
+const WORKSPACE = '/home/node/.openclaw/workspace'
 
-// Magic bytes → mime. Si on ajoute des types plus tard (pdf, etc.) l'enrichir ici.
 function detectMime(buf: Buffer): string | null {
   if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png'
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg'
@@ -37,7 +36,6 @@ export async function POST(req: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer())
 
-    // Vérif des magic bytes — bloque les fichiers qui mentent sur leur type.
     const detected = detectMime(buffer)
     if (!detected) {
       return NextResponse.json(
@@ -52,18 +50,17 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const workspaceDir = `/tmp/openclaw-homes/${instance.containerName}/workspace`
-    const uploadsDir = join(workspaceDir, 'uploads')
-    await mkdir(uploadsDir, { recursive: true })
-
     const timestamp = Date.now()
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
     const filename = `${timestamp}-${safeName}`
-    const filePath = join(uploadsDir, filename)
-
-    await writeFile(filePath, buffer)
-
     const relativePath = `uploads/${filename}`
+
+    // Write file into the workspace container via base64 pipe
+    const b64 = buffer.toString('base64')
+    await orchestrator.exec(instance.containerName, [
+      'sh', '-c', `mkdir -p ${WORKSPACE}/uploads && echo '${b64}' | base64 -d > ${WORKSPACE}/${relativePath}`,
+    ])
+
     const isImage = detected.startsWith('image/')
 
     return NextResponse.json({
