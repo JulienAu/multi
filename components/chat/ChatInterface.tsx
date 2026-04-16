@@ -343,8 +343,8 @@ export function ChatInterface() {
 
   if (loading) return <div className="flex items-center justify-center h-full"><p className="text-sm text-ui-text-tertiary">Chargement...</p></div>
 
-  // ─── Deploy screen (only if never provisioned or in error state) ──────
-  if (!wasProvisioned) {
+  // ─── Deploy screen (while provisioning or if never provisioned) ──────
+  if (!wasProvisioned || provisioning) {
     return (
       <div className="flex items-center justify-center h-full p-6">
         <div className="max-w-lg w-full">
