@@ -92,6 +92,11 @@ jobs:
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           kustomize edit set image ghcr.io/OWNER/multi=ghcr.io/${OWNER}/${{ github.event.repository.name }}:${SHA}
 
+      - name: Delete old migrate job
+        run: |
+          NS=${{ github.event.inputs.environment == 'staging' && 'multi-staging' || 'multi' }}
+          kubectl -n $NS delete job multi-migrate --ignore-not-found
+
       - name: Apply
         run: |
           kustomize build deploy/overlays/${{ github.event.inputs.environment || 'production' }} | kubectl apply -f -
