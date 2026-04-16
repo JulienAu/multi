@@ -1,7 +1,7 @@
 // LLM Gateway — proxy all OpenRouter calls through per-business model resolution,
 // rate limiting, and usage tracking.
 
-import { db, modelConfigs, llmUsage, businesses } from '@/lib/db'
+import { db, llmUsage } from '@/lib/db'
 import { eq, and, sql, gte } from 'drizzle-orm'
 import { callLLM, MODELS, type OpenRouterRequest, type OpenRouterResponse } from './client'
 import type { ModelConfig } from '@/lib/db/schema'

@@ -285,7 +285,7 @@ export function ArsCoachChat() {
             Entre ton email pour continuer
           </p>
           <p className="text-xs text-ui-text-secondary mb-3">
-            Tu as utilise tes 10 messages gratuits. Entre ton email pour debloquer l'acces complet.
+            Tu as utilise tes 10 messages gratuits. Entre ton email pour debloquer l&apos;acces complet.
           </p>
           <div className="flex gap-2">
             <input

@@ -53,6 +53,7 @@ export function getDelegateMessage(delegated: string[]): string {
 export function getAgentMessage(
   questionId: string,
   answer: string | string[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _answers: WizardAnswers
 ): string | null {
   switch (questionId) {

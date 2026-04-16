@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, arsCoachSessions, arsCoachMessages } from '@/lib/db'
-import { eq, desc, sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { callLLMStream } from '@/lib/llm/client'
 import { selectChapters, buildSystemPrompt, buildMessages } from '@/lib/ars-coach/prompt'

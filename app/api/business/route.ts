@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, businesses } from '@/lib/db'
-import { and, eq, desc } from 'drizzle-orm'
+import { desc } from 'drizzle-orm'
 import { getCurrentUserId } from '@/lib/auth'
 
 export async function GET() {

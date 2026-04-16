@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers'
 import { SignJWT, jwtVerify } from 'jose'
 import { db, users, businesses, wizardSessions, businessDocs, leads } from '@/lib/db'
-import { eq, and } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 
 if (!process.env.JWT_SECRET) {

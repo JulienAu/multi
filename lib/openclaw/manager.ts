@@ -1,4 +1,4 @@
-import { db, openclawInstances, businesses, businessDocs, wizardSessions, ars } from '@/lib/db'
+import { db, openclawInstances, businessDocs, wizardSessions } from '@/lib/db'
 import { eq, desc } from 'drizzle-orm'
 import crypto from 'crypto'
 import { orchestrator } from '@/lib/orchestrator'

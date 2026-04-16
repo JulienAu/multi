@@ -186,7 +186,7 @@ export default function FilesPage() {
 
   return (
     <div className="p-6 max-w-5xl">
-      <h1 className="text-2xl font-medium text-ui-text-primary mb-1">Fichiers de l'agent</h1>
+      <h1 className="text-2xl font-medium text-ui-text-primary mb-1">Fichiers de l&apos;agent</h1>
       <p className="text-sm text-ui-text-secondary mb-4">
         Explorez le workspace de votre agent OpenClaw.
       </p>

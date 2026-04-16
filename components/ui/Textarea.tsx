@@ -1,8 +1,8 @@
 'use client'
 
-import { TextareaHTMLAttributes, forwardRef } from 'react'
+import { forwardRef } from 'react'
 
-interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {}
+type TextareaProps = React.ComponentProps<'textarea'>
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className = '', ...props }, ref) => {

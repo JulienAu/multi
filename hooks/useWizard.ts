@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { QUESTIONS } from '@/lib/questions'
-import type { WizardState, WizardAnswers } from '@/lib/types'
+import type { WizardState } from '@/lib/types'
 
 const INITIAL_STATE: WizardState = {
   step: 'wizard',

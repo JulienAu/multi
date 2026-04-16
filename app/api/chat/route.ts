@@ -4,7 +4,7 @@ import { getOpenClawInstance, streamFromOpenClaw, cleanOpenClawResponse } from '
 import { sessionManager } from '@/lib/openclaw/session-manager'
 import { llmGateway } from '@/lib/llm/gateway'
 import { db, chatMessages, conversations } from '@/lib/db'
-import { desc, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import type { OpenClawEvent } from '@/lib/openclaw/ws-client'
 
@@ -47,9 +47,8 @@ export async function POST(req: NextRequest) {
       return handleMultimodalChat(businessId, conversationId, message, images!, instance)
     }
 
-    let session
     try {
-      session = await sessionManager.getSession(businessId)
+      await sessionManager.getSession(businessId)
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : 'Cannot connect to agent' }, { status: 500 })
     }

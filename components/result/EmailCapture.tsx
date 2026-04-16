@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 
@@ -46,12 +47,12 @@ export function EmailCapture({ sessionId }: EmailCaptureProps) {
           <p className="text-sm text-ui-text-secondary mb-4">
             Creez un compte pour acceder a votre dashboard, modifier votre document et activer vos agents IA.
           </p>
-          <a
+          <Link
             href="/sign-up"
             className="inline-flex items-center px-5 py-2.5 rounded-lg bg-brand-violet text-white text-sm font-medium hover:bg-brand-violet-dark transition-colors"
           >
             Creer mon compte gratuit
-          </a>
+          </Link>
         </div>
       </div>
     )

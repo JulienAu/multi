@@ -337,7 +337,7 @@ export default function AdminLlmPage() {
         <h2 className="text-lg font-semibold text-ui-text-primary mb-4">Agents actifs</h2>
 
         {agents.length === 0 ? (
-          <p className="text-ui-text-tertiary">Aucun agent en cours d'execution.</p>
+          <p className="text-ui-text-tertiary">Aucun agent en cours d&apos;execution.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">

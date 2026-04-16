@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db, leads, wizardSessions, businessDocs } from '@/lib/db'
-import { eq, desc, and } from 'drizzle-orm'
+import { eq, desc } from 'drizzle-orm'
 import { sendEmail, buildBusinessMdEmail } from '@/lib/email'
 import { z } from 'zod'
 

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db, openclawInstances } from '@/lib/db'
-import { eq } from 'drizzle-orm'
+import { db } from '@/lib/db'
 import { logUsage } from '@/lib/llm/gateway'
 
 /**

@@ -1,8 +1,8 @@
 'use client'
 
-import { InputHTMLAttributes, forwardRef } from 'react'
+import { forwardRef } from 'react'
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {}
+type InputProps = React.ComponentProps<'input'>
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className = '', ...props }, ref) => {

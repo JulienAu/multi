@@ -297,7 +297,7 @@ export default function AgentsPage() {
 
         <div className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-ui-text-primary mb-1">Nom de l'agent</label>
+            <label className="block text-sm font-medium text-ui-text-primary mb-1">Nom de l&apos;agent</label>
             <input
               value={formName}
               onChange={e => setFormName(e.target.value)}

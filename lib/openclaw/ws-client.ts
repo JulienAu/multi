@@ -3,8 +3,6 @@ import WebSocket from 'ws'
 import crypto from 'crypto'
 import { EventEmitter } from 'events'
 
-const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
-
 function base64UrlEncode(buf: Buffer): string {
   return buf.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '')
 }

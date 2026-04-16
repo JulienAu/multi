@@ -242,6 +242,7 @@ export const k3sOrchestrator: Orchestrator = {
     return res.text()
   },
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async fixOwnership(_hostPath: string, _uidGid: string) {
     // No-op: init container handles ownership
   },

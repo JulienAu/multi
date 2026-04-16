@@ -91,7 +91,7 @@ function PreviewContent() {
             <div className="w-16 h-16 rounded-2xl bg-ui-bg-tertiary flex items-center justify-center text-3xl mx-auto mb-4">🌐</div>
             <h2 className="text-lg font-medium text-ui-text-primary mb-2">Preview</h2>
             <p className="text-sm text-ui-text-secondary mb-4">
-              Entrez le chemin d'un fichier HTML dans la barre d'adresse, ou cliquez sur "Voir le site" depuis la page Fichiers.
+              Entrez le chemin d&apos;un fichier HTML dans la barre d&apos;adresse, ou cliquez sur &quot;Voir le site&quot; depuis la page Fichiers.
             </p>
             <p className="text-xs text-ui-text-tertiary">
               Exemple : premium_sushi_site/public/index.html

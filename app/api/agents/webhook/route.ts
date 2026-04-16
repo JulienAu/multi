@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db, agentJobs, agentJobRuns, openclawInstances } from '@/lib/db'
+import { db, agentJobs, agentJobRuns } from '@/lib/db'
 import { eq } from 'drizzle-orm'
 import crypto from 'crypto'
 import { recordWebhookEvent } from '@/lib/webhook-idempotency'

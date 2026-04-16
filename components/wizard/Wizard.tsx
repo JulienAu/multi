@@ -79,7 +79,7 @@ export function Wizard() {
               Construisez votre machine<br />a revenus en 5 minutes.
             </h1>
             <p className="text-sm text-ui-text-secondary max-w-sm mx-auto mb-3">
-              Repondez a 12 questions. MULTI deploie votre equipe d'agents IA.<br />
+              Repondez a 12 questions. MULTI deploie votre equipe d&apos;agents IA.<br />
               Votre business tourne 24h/24, 7j/7.
             </p>
             <p className="text-xs text-ui-text-tertiary">

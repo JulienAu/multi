@@ -6,7 +6,6 @@ import type { AgentMessage, WizardAnswers } from '@/lib/types'
 
 export function useAgentMessages() {
   const idCounter = useRef(1)
-  const triggeredQuestions = useRef<Set<string>>(new Set())
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: '0',

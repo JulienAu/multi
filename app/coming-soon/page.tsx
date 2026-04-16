@@ -56,7 +56,7 @@ export default function ComingSoonPage() {
         </h1>
 
         <p className="text-md text-ui-text-secondary mb-8 leading-relaxed">
-          La plateforme qui deploie votre equipe d'agents IA.
+          La plateforme qui deploie votre equipe d&apos;agents IA.
           <br />
           Laissez votre email pour etre prevenu au lancement.
         </p>
@@ -64,7 +64,7 @@ export default function ComingSoonPage() {
         {status === 'subscribed' ? (
           <div className="animate-fade-up rounded-xl bg-brand-green-light border border-brand-green/20 p-4">
             <p className="text-sm font-medium text-brand-green-dark">
-              C'est note ! On vous previent des que MULTI est disponible.
+              C&apos;est note ! On vous previent des que MULTI est disponible.
             </p>
           </div>
         ) : (
