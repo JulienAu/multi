@@ -2,6 +2,20 @@ import type { Orchestrator, WorkspaceSpec } from './types'
 
 const DATA_MOUNT = '/home/node/.openclaw'
 
+/** Default skills cloned into every workspace at creation. */
+const DEFAULT_SKILLS: Array<{ repo: string; paths: string[] }> = [
+  {
+    repo: 'https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git',
+    paths: [
+      '.claude/skills/ui-ux-pro-max',
+      '.claude/skills/design',
+      '.claude/skills/ui-styling',
+      '.claude/skills/brand',
+      '.claude/skills/design-system',
+    ],
+  },
+]
+
 let cachedToken: string | null = null
 
 async function k8sApi(path: string, options: RequestInit = {}): Promise<Response> {
@@ -123,6 +137,8 @@ export const k3sOrchestrator: Orchestrator = {
     const cpuMillis = spec.cpus ? `${parseInt(spec.cpus) * 1000}m` : '1000m'
 
     const initContainers: unknown[] = []
+
+    // Seed files from ConfigMap
     if (Object.keys(configMapData).length > 0) {
       const copyCommands = Object.entries(configMapData).map(([key]) => {
         const destPath = key.replace(/__/g, '/')
@@ -137,6 +153,29 @@ export const k3sOrchestrator: Orchestrator = {
           { name: 'data', mountPath: DATA_MOUNT },
           { name: 'seed-files', mountPath: '/seed' },
         ],
+      })
+    }
+
+    // Install default skills via git clone
+    if (DEFAULT_SKILLS.length > 0) {
+      const skillCmds = ['apk add --no-cache git']
+      const skillsDir = `${DATA_MOUNT}/workspace/skills`
+      skillCmds.push(`mkdir -p ${skillsDir}`)
+      for (const skill of DEFAULT_SKILLS) {
+        const tmpDir = `/tmp/skill-${Math.random().toString(36).slice(2, 8)}`
+        skillCmds.push(`git clone --depth 1 ${skill.repo} ${tmpDir} 2>/dev/null || true`)
+        for (const p of skill.paths) {
+          const destName = p.split('/').pop()!
+          skillCmds.push(`cp -r ${tmpDir}/${p} ${skillsDir}/${destName} 2>/dev/null || true`)
+        }
+        skillCmds.push(`rm -rf ${tmpDir}`)
+      }
+      skillCmds.push(`chown -R 1000:1000 ${skillsDir}`)
+      initContainers.push({
+        name: 'install-skills',
+        image: 'alpine:3',
+        command: ['sh', '-c', skillCmds.join(' && ')],
+        volumeMounts: [{ name: 'data', mountPath: DATA_MOUNT }],
       })
     }
 

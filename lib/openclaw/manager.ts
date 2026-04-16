@@ -470,26 +470,7 @@ export async function provisionOpenClaw(businessId: string): Promise<{
             await orchestrator.fixOwnership(homeDir, '1000:1000')
           }
 
-          // === PHASE 4b: Install default skills ===
-          console.log('[openclaw] installing default skills...')
-          const skillsInstallCmd = [
-            'mkdir -p /home/node/.openclaw/workspace/skills',
-            'git clone https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git /tmp/uupm 2>&1 || true',
-            'mkdir -p /home/node/.openclaw/workspace/skills/ui-ux-pro-max',
-            'cp /tmp/uupm/.claude/skills/ui-ux-pro-max/SKILL.md /home/node/.openclaw/workspace/skills/ui-ux-pro-max/SKILL.md 2>/dev/null || true',
-            'cp -r /tmp/uupm/.claude/skills/design /home/node/.openclaw/workspace/skills/design 2>/dev/null || true',
-            'cp -r /tmp/uupm/.claude/skills/ui-styling /home/node/.openclaw/workspace/skills/ui-styling 2>/dev/null || true',
-            'cp -r /tmp/uupm/.claude/skills/brand /home/node/.openclaw/workspace/skills/brand 2>/dev/null || true',
-            'cp -r /tmp/uupm/.claude/skills/design-system /home/node/.openclaw/workspace/skills/design-system 2>/dev/null || true',
-            'cp -r /tmp/uupm /home/node/.openclaw/workspace/skills/ui-ux-pro-max-skill 2>/dev/null || true',
-            'rm -rf /tmp/uupm',
-          ].join(' && ')
-          try {
-            await orchestrator.exec(containerName, ['sh', '-c', skillsInstallCmd])
-            console.log('[openclaw] skill ui-ux-pro-max-skill installed')
-          } catch (e) {
-            console.log('[openclaw] skill install failed:', e instanceof Error ? e.message : e)
-          }
+          // Skills are installed by the init container (k3s) — see DEFAULT_SKILLS in k3s.ts
 
           // === PHASE 5: Set exec approvals to auto-approve all ===
           const approvalsCmd = 'echo \'{"version":1,"defaults":{"security":"full","ask":"off","autoAllowSkills":true},"agents":{"main":{"security":"full","ask":"off"}}}\' | openclaw approvals set --stdin && openclaw approvals allowlist add --agent "*" "*" && openclaw approvals allowlist add --agent "main" "*"'
