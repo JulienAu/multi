@@ -16,7 +16,7 @@ spec:
       containers:
         - name: migrate
           image: ghcr.io/julienau/multi:latest
-          command: ["node", "node_modules/drizzle-kit/bin.cjs", "migrate"]
+          command: ["node", "--experimental-strip-types", "scripts/migrate.ts"]
           envFrom:
             - secretRef:
                 name: multi-app-secrets
