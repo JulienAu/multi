@@ -9,6 +9,7 @@ import { selectChapters, buildSystemPrompt, buildMessages } from '@/lib/ars-coac
 const ARS_COACH_MODEL = process.env.ARS_COACH_MODEL || 'anthropic/claude-sonnet-4-5'
 
 const PRE_ACTIVATION_LIMIT = 10
+const ACTIVATED_DAILY_LIMIT = 20
 
 const schema = z.object({
   message: z.string().min(1).max(5000),
@@ -58,11 +59,17 @@ export async function POST(req: NextRequest) {
     })
     if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 })
 
-    // Rate limit: 10 messages for non-activated sessions
+    // Rate limit
     if (!session.email && session.messageCount >= PRE_ACTIVATION_LIMIT) {
       return NextResponse.json({
         error: 'limit_reached',
         message: 'Tu as atteint la limite de messages. Entre ton email pour continuer.',
+      }, { status: 429 })
+    }
+    if (session.email && session.messageCount >= ACTIVATED_DAILY_LIMIT) {
+      return NextResponse.json({
+        error: 'daily_limit',
+        message: 'Tu as atteint la limite quotidienne de 20 messages. Reviens demain !',
       }, { status: 429 })
     }
 
@@ -118,6 +125,7 @@ export async function POST(req: NextRequest) {
     const encoder = new TextEncoder()
     let fullContent = ''
     let clientClosed = false
+    let finishReason = 'stop'
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -145,6 +153,8 @@ export async function POST(req: NextRequest) {
                     ))
                   }
                 }
+                const reason = parsed.choices?.[0]?.finish_reason
+                if (reason) finishReason = reason
               } catch { /* skip malformed chunks */ }
             }
           }
@@ -153,7 +163,7 @@ export async function POST(req: NextRequest) {
         } finally {
           if (!clientClosed) {
             try {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`))
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done', truncated: finishReason === 'length' })}\n\n`))
               controller.close()
             } catch { /* already closed */ }
           }

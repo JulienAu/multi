@@ -41,6 +41,8 @@ export function ArsCoachChat() {
   const [email, setEmail] = useState('')
   const [emailSubmitting, setEmailSubmitting] = useState(false)
   const [emailError, setEmailError] = useState('')
+  const [truncated, setTruncated] = useState(false)
+  const [dailyLimitReached, setDailyLimitReached] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -132,6 +134,7 @@ export function ArsCoachChat() {
     setInput('')
     if (inputRef.current) inputRef.current.style.height = 'auto'
     setSending(true)
+    setTruncated(false)
 
     const newCount = messageCount + 1
     setMessageCount(newCount)
@@ -152,12 +155,22 @@ export function ArsCoachChat() {
       })
 
       if (res.status === 429) {
-        setShowEmailBlock(true)
-        setMessages(prev => prev.map(m =>
-          m.id === assistantId
-            ? { ...m, content: 'Tu as atteint la limite de messages gratuits. Entre ton email ci-dessous pour continuer.' }
-            : m
-        ))
+        const data = await res.json()
+        if (data.error === 'daily_limit') {
+          setDailyLimitReached(true)
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: 'Tu as atteint la limite de 20 messages pour aujourd&apos;hui. Reviens demain !' }
+              : m
+          ))
+        } else {
+          setShowEmailBlock(true)
+          setMessages(prev => prev.map(m =>
+            m.id === assistantId
+              ? { ...m, content: 'Tu as atteint la limite de messages gratuits. Entre ton email ci-dessous pour continuer.' }
+              : m
+          ))
+        }
         setSending(false)
         return
       }
@@ -192,6 +205,9 @@ export function ArsCoachChat() {
               setMessages(prev => prev.map(m =>
                 m.id === assistantId ? { ...m, content } : m
               ))
+            }
+            if (ev.type === 'done' && ev.truncated) {
+              setTruncated(true)
             }
           } catch { /* skip */ }
         }
@@ -306,6 +322,19 @@ export function ArsCoachChat() {
             </div>
           )}
 
+          {/* Continue button (when response was truncated) */}
+          {truncated && !sending && (
+            <div className="flex gap-3 animate-fade-up">
+              <div className="w-7 shrink-0" />
+              <button
+                onClick={() => sendMessage('Continue.')}
+                className="px-3.5 py-2 rounded-xl border border-ui-border text-[13px] text-ui-text-secondary hover:border-brand-violet hover:text-brand-violet hover:bg-brand-violet-light transition-all duration-200 cursor-pointer"
+              >
+                Continuer la reponse...
+              </button>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -391,7 +420,7 @@ export function ArsCoachChat() {
               rows={1}
               className="flex-1 resize-none rounded-xl border border-ui-border bg-ui-bg-secondary px-4 py-2.5 text-[14px] text-ui-text-primary placeholder:text-ui-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand-violet/30 focus:border-brand-violet focus:bg-ui-bg transition-all"
               style={{ maxHeight: '120px' }}
-              disabled={sending || (showEmailBlock && !activated)}
+              disabled={sending || (showEmailBlock && !activated) || dailyLimitReached}
             />
             <button
               onClick={handleSend}
