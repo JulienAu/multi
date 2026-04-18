@@ -44,10 +44,24 @@ export function ArsCoachChat() {
   const [truncated, setTruncated] = useState(false)
   const [dailyLimitReached, setDailyLimitReached] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const userScrolledUp = useRef(false)
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  useEffect(scrollToBottom, [messages])
+
+  // Only auto-scroll if user hasn't scrolled up
+  useEffect(() => {
+    if (!userScrolledUp.current) scrollToBottom()
+  }, [messages])
+
+  // Detect when user scrolls up / back to bottom
+  const handleScroll = () => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    userScrolledUp.current = distanceFromBottom > 80
+  }
 
   // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -135,6 +149,7 @@ export function ArsCoachChat() {
     if (inputRef.current) inputRef.current.style.height = 'auto'
     setSending(true)
     setTruncated(false)
+    userScrolledUp.current = false
 
     const newCount = messageCount + 1
     setMessageCount(newCount)
@@ -260,7 +275,7 @@ export function ArsCoachChat() {
       </header>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" ref={scrollContainerRef} onScroll={handleScroll}>
         <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
           {messages.map(msg => (
             <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-fade-up`}>
