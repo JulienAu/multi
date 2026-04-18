@@ -47,20 +47,28 @@ export function ArsCoachChat() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const userScrolledUp = useRef(false)
+  const isAutoScrolling = useRef(false)
 
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = () => {
+    if (!messagesEndRef.current) return
+    isAutoScrolling.current = true
+    messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    // Reset flag after scroll animation completes
+    setTimeout(() => { isAutoScrolling.current = false }, 400)
+  }
 
   // Only auto-scroll if user hasn't scrolled up
   useEffect(() => {
     if (!userScrolledUp.current) scrollToBottom()
   }, [messages])
 
-  // Detect when user scrolls up / back to bottom
+  // Detect when user scrolls up — ignore programmatic scrolls
   const handleScroll = () => {
+    if (isAutoScrolling.current) return
     const el = scrollContainerRef.current
     if (!el) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    userScrolledUp.current = distanceFromBottom > 80
+    userScrolledUp.current = distanceFromBottom > 100
   }
 
   // Auto-resize textarea
