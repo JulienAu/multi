@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?checkout=success`,
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/chat?checkout=success`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/?checkout=cancel`,
       ...(email && { customer_email: email }),
     })

@@ -5,12 +5,10 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 
 const NAV_ITEMS = [
-  { href: '/dashboard', label: 'Dashboard', icon: '■' },
   { href: '/chat', label: 'Chat Agent', icon: '●' },
   { href: '/files', label: 'Fichiers', icon: '◆' },
   { href: '/preview', label: 'Preview', icon: '▶' },
   { href: '/business-md', label: 'BUSINESS.md', icon: '☰' },
-  { href: '/scorecard', label: 'Scorecard', icon: '★' },
   { href: '/agents', label: 'Agents', icon: '⚡' },
 ]
 
@@ -72,7 +70,7 @@ export function NavSidebar() {
   return (
     <aside className="w-56 shrink-0 border-r border-ui-border bg-ui-bg-secondary h-screen sticky top-0 flex flex-col">
       <div className="px-4 py-4 border-b border-ui-border">
-        <Link href="/dashboard" className="text-lg font-medium text-brand-violet tracking-tight">
+        <Link href="/chat" className="text-lg font-medium text-brand-violet tracking-tight">
           MULTI
         </Link>
       </div>

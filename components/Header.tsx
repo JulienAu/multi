@@ -21,8 +21,8 @@ export function Header() {
         </Link>
         <div className="flex items-center gap-3">
           {user ? (
-            <Link href="/dashboard" className="text-sm text-brand-violet hover:underline">
-              Dashboard
+            <Link href="/chat" className="text-sm text-brand-violet hover:underline">
+              Mon Agent
             </Link>
           ) : (
             <>

@@ -18,6 +18,11 @@ export default function middleware(req: NextRequest) {
     }
   }
 
+  // Redirect hidden pages to chat
+  if (pathname === '/dashboard' || pathname === '/scorecard') {
+    return NextResponse.redirect(new URL('/chat', req.url))
+  }
+
   // Auth gate for protected paths
   const isProtected = PROTECTED_PATHS.some(p => pathname.startsWith(p))
   if (!isProtected) return NextResponse.next()

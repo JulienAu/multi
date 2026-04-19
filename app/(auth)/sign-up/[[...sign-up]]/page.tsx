@@ -27,7 +27,7 @@ export default function SignUpPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
-      router.push('/dashboard')
+      router.push('/chat')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Inscription echouee')
     } finally {
